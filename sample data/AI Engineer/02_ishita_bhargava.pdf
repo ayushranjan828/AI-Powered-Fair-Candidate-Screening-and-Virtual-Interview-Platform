@@ -1,0 +1,120 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 2083 >>
+stream
+BT
+/F1 10 Tf
+12 TL
+56 780 Td
+(ISHITA BHARGAVA) Tj
+T*
+(Machine Learning Engineer  |  Pune, Maharashtra) Tj
+T*
+(Phone: +91 99020 44518  |  Email: ishita.bhargava@examplemail.com) Tj
+T*
+(Total Experience: 5 years) Tj
+T*
+() Tj
+T*
+(PROFESSIONAL SUMMARY) Tj
+T*
+(ML engineer moving from classical modelling into applied LLM systems. Strong on retrieval,) Tj
+T*
+(   fine-tuning and MLOps.) Tj
+T*
+() Tj
+T*
+(TECHNICAL SKILLS) Tj
+T*
+(Python, PyTorch, TensorFlow, scikit-learn, Hugging Face Transformers, LoRA / QLoRA fine-tuning) Tj
+T*
+(Weaviate, Chroma, LlamaIndex, MLflow, Kubeflow, Docker) Tj
+T*
+(Kubernetes, AWS SageMaker, SQL, Spark, Flask, Git) Tj
+T*
+(REST APIs) Tj
+T*
+() Tj
+T*
+(WORK EXPERIENCE) Tj
+T*
+(Senior ML Engineer - Vector Systems India) Tj
+T*
+(Mar 2022 - Present) Tj
+T*
+(- Fine-tuned Llama-family models with QLoRA for a domain summarisation task, beating the) Tj
+T*
+(   hosted-API baseline on ROUGE-L at 60% lower inference cost.) Tj
+T*
+(- Stood up the MLOps stack for the team - MLflow tracking, model registry, automated) Tj
+T*
+(   retraining and drift alerts.) Tj
+T*
+(- Built a hybrid BM25 and dense retrieval layer on Weaviate serving 90 QPS at p95 under 200 ms.) Tj
+T*
+() Tj
+T*
+(Machine Learning Engineer - Trellis Data Labs) Tj
+T*
+(Jul 2020 - Feb 2022) Tj
+T*
+(- Developed demand-forecasting models across 14 product lines, reducing stockouts 21%.) Tj
+T*
+(- Owned Spark feature pipelines processing 3 TB of event data daily.) Tj
+T*
+() Tj
+T*
+(PROJECTS) Tj
+T*
+(Multilingual Support Router: Zero-shot intent classifier over 9 Indian languages routing) Tj
+T*
+(   tickets to the right queue; 91% top-1 accuracy.) Tj
+T*
+(Vision QC Prototype: CNN defect detector for a manufacturing client, 96% recall on the defect) Tj
+T*
+(   class.) Tj
+T*
+() Tj
+T*
+(EDUCATION) Tj
+T*
+(M.Tech, Data Science - Indian Institute of Technology, Hyderabad, 2020) Tj
+T*
+(B.E., Information Technology - Savitribai Phule Pune University, 2018) Tj
+T*
+() Tj
+T*
+(CERTIFICATIONS) Tj
+T*
+(- AWS Certified Machine Learning - Specialty, 2022) Tj
+T*
+(- Google Professional Machine Learning Engineer, 2021) Tj
+T*
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000185 00000 n 
+0000000311 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+2446
+%%EOF

@@ -1,0 +1,28 @@
+MEERA RAGHAVAN
+AI Engineer  |  Chennai, Tamil Nadu
+Phone: +91 94440 71852  |  Email: meera.raghavan@examplemail.com
+Total Experience: 2 years
+
+PROFESSIONAL SUMMARY
+Early-career AI engineer focused on retrieval-augmented generation and evaluation.
+
+TECHNICAL SKILLS
+Python, OpenAI API, LangChain, FastAPI, ChromaDB, pandas
+scikit-learn, SQL, Git, Docker, Pytest, Azure
+
+WORK EXPERIENCE
+AI Engineer - Coastline Digital
+Jul 2023 - Present
+- Built an internal policy assistant over 8,000 HR documents; 72% of queries resolved without escalation.
+- Wrote the ingestion pipeline handling PDF, DOCX and scanned-image fallbacks.
+- Maintains a 300-case evaluation suite run on every prompt change in CI.
+
+PROJECTS
+Meeting Digest: Whisper transcription plus LLM summarisation producing action items from standup recordings.
+SQLBuddy: Natural-language-to-SQL tool with schema-aware prompting and query validation.
+
+EDUCATION
+B.E., Computer Science - Anna University, 2023, CGPA 8.9/10
+
+CERTIFICATIONS
+- Microsoft Certified: Azure AI Fundamentals (AI-900), 2023

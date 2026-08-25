@@ -1,0 +1,94 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 1239 >>
+stream
+BT
+/F1 10 Tf
+12 TL
+56 780 Td
+(MANAV CHOWDHURY) Tj
+T*
+(Mobile Application Developer  |  Kolkata, West Bengal) Tj
+T*
+(Phone: +91 98310 47725  |  Email: manav.chowdhury@examplemail.com) Tj
+T*
+(Total Experience: 4 years) Tj
+T*
+() Tj
+T*
+(PROFESSIONAL SUMMARY) Tj
+T*
+(Android and cross-platform mobile engineer. Limited backend exposure.) Tj
+T*
+() Tj
+T*
+(TECHNICAL SKILLS) Tj
+T*
+(Kotlin, Java, Android SDK, Jetpack Compose, Flutter, Dart) Tj
+T*
+(Firebase, SQLite, REST APIs, Retrofit, Git, Gradle) Tj
+T*
+(Play Store deployment) Tj
+T*
+() Tj
+T*
+(WORK EXPERIENCE) Tj
+T*
+(Android Developer - Ridgeway Apps) Tj
+T*
+(Aug 2021 - Present) Tj
+T*
+(- Owns a consumer app with 900k installs and a 4.4 Play Store rating.) Tj
+T*
+(- Migrated the UI layer to Jetpack Compose, cutting screen-build code roughly 30%.) Tj
+T*
+(- Reduced cold-start time from 3.1 s to 1.4 s.) Tj
+T*
+() Tj
+T*
+(PROJECTS) Tj
+T*
+(Offline-First Notes App: Flutter app with local SQLite and conflict-aware cloud sync.) Tj
+T*
+(Fitness Tracker: Wear OS companion app with sensor data aggregation.) Tj
+T*
+() Tj
+T*
+(EDUCATION) Tj
+T*
+(B.Tech, Electronics and Instrumentation - Jadavpur University, 2021) Tj
+T*
+() Tj
+T*
+(CERTIFICATIONS) Tj
+T*
+(- Google Associate Android Developer, 2022) Tj
+T*
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000185 00000 n 
+0000000311 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1602
+%%EOF

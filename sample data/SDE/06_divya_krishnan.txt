@@ -1,0 +1,28 @@
+DIVYA KRISHNAN
+Software Development Engineer I  |  Bengaluru, Karnataka
+Phone: +91 97390 80641  |  Email: divya.krishnan@examplemail.com
+Total Experience: 2 years
+
+PROFESSIONAL SUMMARY
+Early-career engineer working across Node.js services and React frontends.
+
+TECHNICAL SKILLS
+JavaScript, TypeScript, Node.js, Express, React, MongoDB
+PostgreSQL, REST APIs, Jest, Git, Docker, Data structures and algorithms
+
+WORK EXPERIENCE
+SDE I - Orbit Logistics
+Jul 2023 - Present
+- Built the driver-assignment service in Node.js handling 25k daily dispatches.
+- Implemented real-time tracking with WebSockets and Redis pub/sub.
+- Fixed a race condition in shipment status updates that had caused recurring data drift.
+
+PROJECTS
+Kanban Board: Full-stack collaborative board with optimistic UI and conflict resolution.
+Open Source: Merged three PRs into a popular Express middleware library.
+
+EDUCATION
+B.Tech, Computer Science - RV College of Engineering, Bengaluru, 2023, CGPA 9.0/10
+
+CERTIFICATIONS
+None

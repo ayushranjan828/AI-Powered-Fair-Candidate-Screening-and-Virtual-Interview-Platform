@@ -1,0 +1,104 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 1534 >>
+stream
+BT
+/F1 10 Tf
+12 TL
+56 780 Td
+(SHALINI PRAKASH) Tj
+T*
+(Python Developer  |  Bengaluru, Karnataka) Tj
+T*
+(Phone: +91 99860 71428  |  Email: shalini.prakash@examplemail.com) Tj
+T*
+(Total Experience: 5 years) Tj
+T*
+() Tj
+T*
+(PROFESSIONAL SUMMARY) Tj
+T*
+(Python developer specialising in API design and data engineering workloads.) Tj
+T*
+() Tj
+T*
+(TECHNICAL SKILLS) Tj
+T*
+(Python, FastAPI, Flask, pandas, NumPy, Airflow) Tj
+T*
+(PySpark, PostgreSQL, MongoDB, Redis, Docker, GCP) Tj
+T*
+(BigQuery, REST APIs, Pytest, SQLAlchemy, Git, Linux) Tj
+T*
+() Tj
+T*
+(WORK EXPERIENCE) Tj
+T*
+(Python Developer - Larkspur Data Services) Tj
+T*
+(Sep 2021 - Present) Tj
+T*
+(- Built 30+ Airflow DAGs orchestrating ingestion from 12 partner systems.) Tj
+T*
+(- Developed the customer-facing reporting API in FastAPI with async database access.) Tj
+T*
+(- Cut a PySpark aggregation job from 90 to 22 minutes through partitioning and broadcast joins.) Tj
+T*
+() Tj
+T*
+(Junior Developer - Larkspur Data Services) Tj
+T*
+(Aug 2020 - Aug 2021) Tj
+T*
+(- Maintained ETL scripts and wrote data validation utilities.) Tj
+T*
+() Tj
+T*
+(PROJECTS) Tj
+T*
+(Schema Drift Detector: Tool that diffs incoming partner schemas and blocks breaking loads.) Tj
+T*
+(PDF Report Generator: Python service producing 4,000 branded client PDFs monthly.) Tj
+T*
+() Tj
+T*
+(EDUCATION) Tj
+T*
+(M.C.A. - National Institute of Technology, Trichy, 2020) Tj
+T*
+(B.Sc., Computer Science - Bangalore University, 2017) Tj
+T*
+() Tj
+T*
+(CERTIFICATIONS) Tj
+T*
+(- Google Associate Cloud Engineer, 2022) Tj
+T*
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000185 00000 n 
+0000000311 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1897
+%%EOF

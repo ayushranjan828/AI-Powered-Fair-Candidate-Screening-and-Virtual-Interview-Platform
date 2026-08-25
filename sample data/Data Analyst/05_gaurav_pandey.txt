@@ -1,0 +1,29 @@
+GAURAV PANDEY
+Data Analyst  |  Lucknow, Uttar Pradesh
+Phone: +91 94150 71129  |  Email: gaurav.pandey@examplemail.com
+Total Experience: 3 years
+
+PROFESSIONAL SUMMARY
+Analyst supporting finance reporting with Excel and SQL.
+
+TECHNICAL SKILLS
+Advanced Excel, Pivot tables, VLOOKUP, Power Query, SQL, Power BI
+Tally, Financial reporting, Variance analysis, Data cleaning
+
+WORK EXPERIENCE
+Data Analyst - Finance - Redstone Manufacturing
+Aug 2022 - Present
+- Prepares monthly MIS packs covering P&L, working capital and plant-level costs.
+- Rebuilt the budgeting workbook with Power Query, cutting the close cycle by two days.
+- Runs variance analysis and presents findings to plant heads.
+
+PROJECTS
+Cost Centre Dashboard: Power BI dashboard tracking spend against budget across 22 cost centres.
+Receivables Ageing Automation: Power Query pipeline replacing a manual ageing report.
+
+EDUCATION
+M.Com - University of Lucknow, 2022
+B.Com - University of Lucknow, 2020
+
+CERTIFICATIONS
+- Microsoft Excel Expert (MO-201), 2022

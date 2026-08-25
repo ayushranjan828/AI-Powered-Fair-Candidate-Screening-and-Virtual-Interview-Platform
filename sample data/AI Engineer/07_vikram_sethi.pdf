@@ -1,0 +1,108 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 1625 >>
+stream
+BT
+/F1 10 Tf
+12 TL
+56 780 Td
+(VIKRAM SETHI) Tj
+T*
+(Software Engineer \(ML Platform\)  |  Mumbai, Maharashtra) Tj
+T*
+(Phone: +91 98330 55901  |  Email: vikram.sethi@examplemail.com) Tj
+T*
+(Total Experience: 6 years) Tj
+T*
+() Tj
+T*
+(PROFESSIONAL SUMMARY) Tj
+T*
+(Platform engineer supporting ML teams. Deep infrastructure skills, lighter on modelling.) Tj
+T*
+() Tj
+T*
+(TECHNICAL SKILLS) Tj
+T*
+(Python, Go, Kubernetes, Docker, Terraform, Kafka) Tj
+T*
+(Airflow, AWS, GCP, CI/CD, gRPC, REST APIs) Tj
+T*
+(PostgreSQL, Redis, Prometheus, Grafana, Git) Tj
+T*
+() Tj
+T*
+(WORK EXPERIENCE) Tj
+T*
+(Senior Platform Engineer - Arclight Systems) Tj
+T*
+(Feb 2021 - Present) Tj
+T*
+(- Built the model-serving platform hosting 40+ models on Kubernetes with canary rollout and) Tj
+T*
+(   autoscaling.) Tj
+T*
+(- Owns Airflow orchestration for all training and batch-inference jobs.) Tj
+T*
+(- Added GPU node pools and inference caching, cutting serving cost 29%.) Tj
+T*
+() Tj
+T*
+(Backend Engineer - Arclight Systems) Tj
+T*
+(Jun 2019 - Jan 2021) Tj
+T*
+(- Developed high-throughput ingestion services in Go handling 80k events per second.) Tj
+T*
+() Tj
+T*
+(PROJECTS) Tj
+T*
+(Feature Store Rollout: Delivered a shared feature store cutting duplicate pipeline work across) Tj
+T*
+(   four ML teams.) Tj
+T*
+(Inference Gateway: gRPC gateway with request batching, raising GPU utilisation from 34% to 71%.) Tj
+T*
+() Tj
+T*
+(EDUCATION) Tj
+T*
+(B.Tech, Information Technology - Mumbai University, 2019) Tj
+T*
+() Tj
+T*
+(CERTIFICATIONS) Tj
+T*
+(- Certified Kubernetes Administrator \(CKA\), 2022) Tj
+T*
+(- AWS Certified Solutions Architect - Associate, 2020) Tj
+T*
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000185 00000 n 
+0000000311 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1988
+%%EOF

@@ -1,0 +1,106 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 1549 >>
+stream
+BT
+/F1 10 Tf
+12 TL
+56 780 Td
+(PRIYA SUNDARAM) Tj
+T*
+(Software Development Engineer II  |  Chennai, Tamil Nadu) Tj
+T*
+(Phone: +91 99400 27736  |  Email: priya.sundaram@examplemail.com) Tj
+T*
+(Total Experience: 4 years) Tj
+T*
+() Tj
+T*
+(PROFESSIONAL SUMMARY) Tj
+T*
+(Full-stack engineer strongest on React and Node, comfortable owning features from design to) Tj
+T*
+(   production.) Tj
+T*
+() Tj
+T*
+(TECHNICAL SKILLS) Tj
+T*
+(JavaScript, TypeScript, React, Next.js, Node.js, Express) Tj
+T*
+(GraphQL, REST APIs, PostgreSQL, MongoDB, Jest, Cypress) Tj
+T*
+(Docker, AWS Lambda, Git, Agile/Scrum, HTML, CSS) Tj
+T*
+(Tailwind) Tj
+T*
+() Tj
+T*
+(WORK EXPERIENCE) Tj
+T*
+(SDE II - Lumen Health Tech) Tj
+T*
+(Jun 2023 - Present) Tj
+T*
+(- Rebuilt the patient portal in Next.js; Lighthouse performance score rose from 54 to 93.) Tj
+T*
+(- Designed the GraphQL gateway consolidating five REST backends.) Tj
+T*
+(- Raised frontend test coverage from 31% to 78% with Jest and Cypress.) Tj
+T*
+() Tj
+T*
+(SDE I - Lumen Health Tech) Tj
+T*
+(Jul 2021 - May 2023) Tj
+T*
+(- Shipped the appointment-booking module now handling 40k bookings a month.) Tj
+T*
+() Tj
+T*
+(PROJECTS) Tj
+T*
+(Design System: Built and documented a 60-component React library used across four products.) Tj
+T*
+(Offline Sync: IndexedDB-backed offline mode for the clinician mobile web app.) Tj
+T*
+() Tj
+T*
+(EDUCATION) Tj
+T*
+(B.E., Computer Science - PSG College of Technology, Coimbatore, 2021, CGPA 8.5/10) Tj
+T*
+() Tj
+T*
+(CERTIFICATIONS) Tj
+T*
+(- Meta Front-End Developer Professional Certificate, 2022) Tj
+T*
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000185 00000 n 
+0000000311 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1912
+%%EOF

@@ -1,0 +1,29 @@
+ABHISHEK RATHORE
+Python Developer  |  Jaipur, Rajasthan
+Phone: +91 93020 55841  |  Email: abhishek.rathore@examplemail.com
+Total Experience: 3 years
+
+PROFESSIONAL SUMMARY
+Python developer with scripting, automation and light web development experience.
+
+TECHNICAL SKILLS
+Python, Flask, pandas, NumPy, openpyxl, Requests
+MySQL, Git, Linux, Cron, Shell scripting, Matplotlib
+
+WORK EXPERIENCE
+Python Developer - Amber Infotech
+Aug 2022 - Present
+- Automates recurring client reporting across Excel, CSV and database sources.
+- Maintains three internal Flask tools used by the operations team.
+- Wrote a reconciliation utility processing 500k records nightly.
+
+PROJECTS
+Excel Report Engine: openpyxl-based generator producing formatted multi-sheet reports.
+Email Digest Bot: Scheduled script summarising ticket backlogs into a daily email.
+
+EDUCATION
+M.Sc., Computer Science - University of Rajasthan, 2022
+B.Sc., Computer Science - University of Rajasthan, 2020
+
+CERTIFICATIONS
+None

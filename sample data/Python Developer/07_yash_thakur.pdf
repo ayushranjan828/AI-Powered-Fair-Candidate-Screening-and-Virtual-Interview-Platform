@@ -1,0 +1,96 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 1354 >>
+stream
+BT
+/F1 10 Tf
+12 TL
+56 780 Td
+(YASH THAKUR) Tj
+T*
+(Data Engineer  |  Nagpur, Maharashtra) Tj
+T*
+(Phone: +91 90280 91674  |  Email: yash.thakur@examplemail.com) Tj
+T*
+(Total Experience: 4 years) Tj
+T*
+() Tj
+T*
+(PROFESSIONAL SUMMARY) Tj
+T*
+(Data engineer writing Python and SQL pipelines; less exposure to web application development.) Tj
+T*
+() Tj
+T*
+(TECHNICAL SKILLS) Tj
+T*
+(Python, SQL, PySpark, Airflow, Hadoop, Hive) Tj
+T*
+(Snowflake, AWS Glue, AWS S3, ETL, Data modelling, Git) Tj
+T*
+(Shell scripting, pandas) Tj
+T*
+() Tj
+T*
+(WORK EXPERIENCE) Tj
+T*
+(Data Engineer - Granite Data Works) Tj
+T*
+(Sep 2021 - Present) Tj
+T*
+(- Owns 45 production ETL pipelines moving 8 TB a day into Snowflake.) Tj
+T*
+(- Rebuilt the ingestion layer on AWS Glue, cutting infrastructure cost 33%.) Tj
+T*
+(- Introduced data-quality assertions blocking bad loads before they reach reporting.) Tj
+T*
+() Tj
+T*
+(PROJECTS) Tj
+T*
+(Backfill Framework: Parameterised backfill tooling that replays historical loads safely.) Tj
+T*
+(Lineage Tracker: Parsed SQL to build a table-level lineage graph across the warehouse.) Tj
+T*
+() Tj
+T*
+(EDUCATION) Tj
+T*
+(B.E., Computer Technology - Rashtrasant Tukadoji Maharaj Nagpur University, 2021) Tj
+T*
+() Tj
+T*
+(CERTIFICATIONS) Tj
+T*
+(- Snowflake SnowPro Core Certification, 2023) Tj
+T*
+(- AWS Certified Data Analytics - Specialty, 2022) Tj
+T*
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000185 00000 n 
+0000000311 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1717
+%%EOF

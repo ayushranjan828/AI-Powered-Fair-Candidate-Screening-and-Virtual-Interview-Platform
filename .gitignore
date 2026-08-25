@@ -1,0 +1,6 @@
+.env
+myenv/
+__pycache__/
+*.pyc
+data/
+*.xlsx
