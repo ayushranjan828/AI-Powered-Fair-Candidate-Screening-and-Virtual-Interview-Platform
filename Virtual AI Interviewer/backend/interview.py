@@ -82,6 +82,14 @@ def build_mix(planned_count: int, categories: list[str] | None) -> dict:
     return {k: v for k, v in mix.items() if v > 0}
 
 
+def _clamp_rate(value) -> float:
+    """Speaking rate, held to the range the UI offers and the voices handle."""
+    try:
+        return round(max(0.7, min(1.3, float(value))), 2)
+    except (TypeError, ValueError):
+        return 0.98
+
+
 def create_interview(candidate_raw: dict, jd_text: str, jd_analysis: dict,
                      job_title: str, options: dict, source: dict) -> dict:
     candidate = candidates.normalize_candidate(candidate_raw)
@@ -111,6 +119,10 @@ def create_interview(candidate_raw: dict, jd_text: str, jd_analysis: dict,
             "categories": [c for c in (options.get("categories") or list(config.CATEGORIES))
                            if c in config.CATEGORIES],
             "voice": bool(options.get("voice", True)),
+            # Carried onto the record so the candidate's own browser speaks in the
+            # voice and at the speed the recruiter chose, not its own defaults.
+            "voice_name": str(options.get("voice_name") or "")[:120],
+            "voice_rate": _clamp_rate(options.get("voice_rate")),
         },
         "weights": evaluation.normalize_weights(options.get("weights")),
         "plan": None,
@@ -173,6 +185,16 @@ async def plan_interview(interview_id: str) -> None:
                 f"{interview.get('plan_error', '')} Question plan fell back to the "
                 f"built-in set: {exc}"
             ).strip()
+
+    # If the model reached outside the categories the recruiter selected, say so
+    # rather than quietly delivering a different interview from the one asked for.
+    strays = plan.get("category_strays") or []
+    if strays:
+        labels = ", ".join(_category_label(c) for c in strays)
+        interview["plan_error"] = (
+            f"{interview.get('plan_error', '')} The plan also included "
+            f"{labels} question(s), which were not among the selected categories."
+        ).strip()
 
     plan["questions"] = _order_plan([q for q in plan["questions"] if q.get("question")])
     if not plan["questions"]:

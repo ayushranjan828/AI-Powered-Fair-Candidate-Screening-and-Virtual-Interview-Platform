@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Virtual AI Interviewer</title>
-<link rel="stylesheet" href="/static/styles.css?v=1" />
+<link rel="stylesheet" href="/static/styles.css?v=3" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>" />
 </head>
 <body>
@@ -20,7 +20,7 @@
   <div class="topbar-right">
     <span id="aiStatus" class="pill pill-muted">checking AI…</span>
     <nav class="tabs">
-      <button class="tab active" data-tab="setup">1 · Set up</button>
+      <button class="tab active" data-tab="setup">1 · Dashboard</button>
       <button class="tab" data-tab="stage">2 · Interview</button>
       <button class="tab" data-tab="report">3 · Report</button>
       <button class="tab" data-tab="history">4 · History</button>
@@ -29,49 +29,130 @@
 </header>
 
 <main>
-<!-- ============================================================= SETUP TAB -->
+<!-- ========================================================= DASHBOARD TAB -->
 <section id="tab-setup" class="tab-panel active">
 
   <div class="card">
     <div class="card-head-row">
       <div>
-        <h2>Who are you interviewing?</h2>
-        <p class="sub">Pull a shortlisted candidate straight from the screening app, or enter one by hand.</p>
+        <h2>Interview dashboard</h2>
+        <p class="sub" id="dashSub">Choose a shortlist to see every candidate, their interview
+          link, and where they have got to.</p>
       </div>
-      <div class="chipset" id="sourceToggle">
-        <button class="chip active" data-source="screening">From a shortlist</button>
-        <button class="chip" data-source="manual">Enter manually</button>
+      <div class="toolbar-right">
+        <button class="btn btn-ghost" id="dashRefresh">Refresh</button>
       </div>
     </div>
 
-    <!-- shortlist picker -->
-    <div id="screeningPane">
-      <label class="field">
+    <div class="dash-controls">
+      <label class="field field-grow">
         <span>Accepted shortlist</span>
         <select id="shortlistSelect"><option value="">Loading…</option></select>
       </label>
-      <div id="shortlistEmpty" class="inline-note" hidden></div>
-      <div class="table-scroll table-scroll-short">
-        <table class="grid" id="candidateGrid">
-          <thead>
-            <tr>
-              <th class="col-tiny"></th>
-              <th>Candidate</th>
-              <th>Current role</th>
-              <th class="col-wide">Experience</th>
-              <th class="col-narrow">Resume ATS</th>
-              <th class="col-narrow">Screening</th>
-            </tr>
-          </thead>
-          <tbody id="candidateBody"></tbody>
-        </table>
+    </div>
+    <div id="shortlistEmpty" class="inline-note" hidden></div>
+
+    <div class="stats" id="dashStats" hidden></div>
+  </div>
+
+  <div class="card" id="dashCard" hidden>
+    <div class="sim-banner">
+      <span class="sim-dot"></span>
+      <div>
+        <strong>This app does not send email.</strong>
+        <span>It issues each candidate a link and hands you the text. Send it from your own
+          mail client, or copy the link — then <em>Mark as sent</em> records that you did.</span>
       </div>
-      <p class="hint">The resume score is shown for context only. The interviewer is never told it, and
-        it forms no part of the interview score — that is the point of this stage.</p>
     </div>
 
-    <!-- manual entry -->
-    <div id="manualPane" hidden>
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <div class="chipset" id="stageFilters"></div>
+        <input id="dashSearch" type="search" placeholder="Search name, role, email…" />
+      </div>
+      <div class="toolbar-right">
+        <span class="hint" id="selCount">none selected</span>
+        <button class="btn btn-ghost" id="issueSelected">🔗 Issue links</button>
+        <button class="btn btn-ghost" id="markSelected">✓ Mark as sent</button>
+        <button class="btn btn-ghost" id="copyAllLinks">Copy all links</button>
+      </div>
+    </div>
+
+    <div class="table-scroll">
+      <table class="grid" id="dashGrid">
+        <thead>
+          <tr>
+            <th class="col-tiny"><input type="checkbox" id="selectAll" title="Select all shown" /></th>
+            <th>Candidate</th>
+            <th>Current role</th>
+            <th class="col-narrow">Resume ATS</th>
+            <th class="col-narrow">Stage</th>
+            <th class="col-narrow">Interview</th>
+            <th class="col-wide">Interview link</th>
+            <th class="col-actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="dashBody"></tbody>
+      </table>
+    </div>
+    <p class="hint">The resume score is shown for context only. The interviewer is never told it,
+      and it forms no part of the interview score — that is the point of this stage.</p>
+  </div>
+
+  <details class="card fold" id="settingsFold">
+    <summary>
+      <span class="fold-title">Interview settings</span>
+      <span class="fold-sub" id="settingsSummary"></span>
+    </summary>
+    <div class="fold-body">
+      <p class="hint">These apply to every link you issue from here, and to any interview you run
+        yourself. A link keeps the settings it was issued with.</p>
+
+      <div class="settings-row">
+        <label class="field field-inline"><span>Planned questions</span>
+          <input id="plannedCount" type="range" min="4" max="20" step="1" value="10" /></label>
+        <output id="plannedOut" class="settings-out">10</output>
+
+        <label class="field field-inline"><span>Follow-ups per question</span>
+          <input id="maxFollowups" type="range" min="0" max="4" step="1" value="2" /></label>
+        <output id="followupsOut" class="settings-out">2</output>
+
+        <button class="btn btn-link" id="resetSettings">Reset to defaults</button>
+      </div>
+      <p class="hint">Follow-ups are generated live from what the candidate actually says, so the
+        real number of questions is higher than the planned count. The whole interview is capped at
+        <strong id="capNote">30</strong> turns.</p>
+
+      <h3 class="mini-head">Question categories</h3>
+      <div class="chipset chipset-wrap" id="categoryChips"></div>
+      <p class="hint">Introduction and closing are always included.</p>
+
+      <h3 class="mini-head">Voice <em>(for interviews you run yourself)</em></h3>
+      <div class="settings-row">
+        <label class="check"><input id="voiceOn" type="checkbox" checked /> Interviewer speaks out loud</label>
+        <label class="field field-inline"><span>Voice</span>
+          <select id="voiceSelect"><option value="">System default</option></select></label>
+        <label class="field field-inline"><span>Speaking rate</span>
+          <input id="voiceRate" type="range" min="0.7" max="1.3" step="0.02" value="0.98" /></label>
+        <output id="rateOut" class="settings-out">0.98×</output>
+      </div>
+      <div id="speechSupport" class="inline-note inline-note-quiet"></div>
+
+      <h3 class="mini-head">Evaluation weights</h3>
+      <table class="criteria-table">
+        <thead><tr><th>Parameter</th><th>Weight (%)</th><th>What it measures</th></tr></thead>
+        <tbody id="weightsBody"></tbody>
+        <tfoot><tr><td>Total</td><td id="weightTotal">100</td><td></td></tr></tfoot>
+      </table>
+    </div>
+  </details>
+
+  <details class="card fold" id="manualFold">
+    <summary>
+      <span class="fold-title">Interview somebody not on a shortlist</span>
+      <span class="fold-sub">For a candidate who never went through screening</span>
+    </summary>
+    <div class="fold-body">
       <div class="grid-2">
         <label class="field"><span>Candidate name *</span>
           <input id="mName" type="text" placeholder="e.g. Priya Sundaram" /></label>
@@ -91,81 +172,71 @@
       <label class="field"><span>Projects <em>(one per line, or comma separated)</em></span>
         <textarea id="mProjects" rows="3" placeholder="Rate limiter library: distributed token bucket on Redis…"></textarea></label>
       <label class="field"><span>Full resume text <em>(optional, but the best grounding for good questions)</em></span>
-        <textarea id="mResume" rows="7" placeholder="Paste the whole resume here…"></textarea></label>
-    </div>
-  </div>
+        <textarea id="mResume" rows="6" placeholder="Paste the whole resume here…"></textarea></label>
 
-  <div class="card">
-    <h2>The role</h2>
-    <div class="grid-2">
-      <label class="field"><span>Job title</span>
-        <input id="jobTitle" type="text" placeholder="e.g. Software Development Engineer" /></label>
-      <div class="field">
-        <span>Job description rubric</span>
-        <div id="rubricState" class="inline-note inline-note-quiet">No job description loaded yet.</div>
+      <div class="grid-2">
+        <label class="field"><span>Job title</span>
+          <input id="jobTitle" type="text" placeholder="e.g. Software Development Engineer" /></label>
+        <div class="field">
+          <span>Job description rubric</span>
+          <div id="rubricState" class="inline-note inline-note-quiet">No job description loaded yet.</div>
+        </div>
       </div>
-    </div>
-    <label class="field"><span>Job description *</span>
-      <textarea id="jdText" rows="8" placeholder="Paste the complete JD — responsibilities, must-have skills, experience…"></textarea></label>
-    <p class="hint">Picking a shortlist fills this in from the screening run, including the rubric the
-      screening agent already extracted, so the interviewer does not have to re-read the JD.</p>
-  </div>
+      <label class="field"><span>Job description *</span>
+        <textarea id="jdText" rows="6" placeholder="Paste the complete JD — responsibilities, must-have skills, experience…"></textarea></label>
 
-  <div class="card">
-    <div class="card-head-row">
-      <h2>Interview settings</h2>
-      <button class="btn btn-link" id="resetSettings">Reset to defaults</button>
-    </div>
+      <div class="card-head-row" style="margin-top:18px">
+        <h3 class="mini-head" style="margin:0">This interview's shape</h3>
+        <button class="btn btn-link" id="oReset">Reset to defaults</button>
+      </div>
+      <p class="hint">Set independently of the dashboard defaults — a one-off candidate is
+        usually being interviewed for a particular reason.</p>
+      <div class="settings-row">
+        <label class="field field-inline"><span>Planned questions</span>
+          <input id="oCount" type="range" min="4" max="20" step="1" value="10" /></label>
+        <output id="oCountOut" class="settings-out">10</output>
 
-    <div class="settings-row">
-      <label class="field field-inline"><span>Planned questions</span>
-        <input id="plannedCount" type="range" min="4" max="20" step="1" value="10" /></label>
-      <output id="plannedOut" class="settings-out">10</output>
+        <label class="field field-inline"><span>Follow-ups each</span>
+          <input id="oFollow" type="range" min="0" max="4" step="1" value="2" /></label>
+        <output id="oFollowOut" class="settings-out">2</output>
+      </div>
+      <div class="chipset chipset-wrap" id="oCats"></div>
 
-      <label class="field field-inline"><span>Follow-ups per question</span>
-        <input id="maxFollowups" type="range" min="0" max="4" step="1" value="2" /></label>
-      <output id="followupsOut" class="settings-out">2</output>
-    </div>
-    <p class="hint">Follow-ups are generated live from what the candidate actually says, so the real
-      number of questions is higher than the planned count. The whole interview is capped at
-      <strong id="capNote">30</strong> turns.</p>
+      <h3 class="mini-head">Voice</h3>
+      <div class="settings-row">
+        <label class="check"><input id="oVoiceOn" type="checkbox" checked /> Interviewer speaks out loud</label>
+        <label class="field field-inline"><span>Voice</span>
+          <select id="oVoiceName"><option value="">System default</option></select></label>
+        <label class="field field-inline"><span>Speaking rate</span>
+          <input id="oRate" type="range" min="0.7" max="1.3" step="0.02" value="0.98" /></label>
+        <output id="oRateOut" class="settings-out">0.98×</output>
+      </div>
 
-    <h3 class="mini-head">Question categories</h3>
-    <div class="chipset chipset-wrap" id="categoryChips"></div>
-    <p class="hint">Introduction and closing are always included.</p>
-
-    <h3 class="mini-head">Voice</h3>
-    <div class="settings-row">
-      <label class="check"><input id="voiceOn" type="checkbox" checked /> Interviewer speaks out loud</label>
-      <label class="field field-inline"><span>Voice</span>
-        <select id="voiceSelect"><option value="">System default</option></select></label>
-      <label class="field field-inline"><span>Speaking rate</span>
-        <input id="voiceRate" type="range" min="0.7" max="1.3" step="0.02" value="0.98" /></label>
-      <output id="rateOut" class="settings-out">0.98×</output>
-    </div>
-    <div id="speechSupport" class="inline-note inline-note-quiet"></div>
-
-    <details class="rubric">
-      <summary>Evaluation weights — how the final score is composed</summary>
+      <h3 class="mini-head">Evaluation weights</h3>
       <table class="criteria-table">
         <thead><tr><th>Parameter</th><th>Weight (%)</th><th>What it measures</th></tr></thead>
-        <tbody id="weightsBody"></tbody>
-        <tfoot><tr><td>Total</td><td id="weightTotal">100</td><td></td></tr></tfoot>
+        <tbody id="oWeightsBody"></tbody>
+        <tfoot><tr><td>Total</td><td id="oWTotal">100</td><td></td></tr></tfoot>
       </table>
-    </details>
+      <p class="hint">Anything that does not add to 100 is scaled to 100 when the interview
+        is prepared, so the ratios you type are what matter.</p>
 
-    <div class="actions-row">
-      <button class="btn btn-primary btn-lg" id="startBtn">Prepare the interview</button>
-      <span id="startHint" class="hint"></span>
-    </div>
-
-    <div id="planProgress" class="progress-wrap" hidden>
-      <div class="progress-head">
-        <strong id="planStage">Starting…</strong>
-        <span id="planDetail"></span>
+      <div class="actions-row">
+        <button class="btn btn-primary" id="startBtn">Prepare interview</button>
+        <span id="startHint" class="hint">Prepares the questions and gives you a link to send —
+          or you can conduct it yourself straight away.</span>
       </div>
-      <div class="progress-bar"><div id="planFill" class="progress-fill progress-fill-indef"></div></div>
+
+      <div id="oResult" class="prepared" hidden></div>
     </div>
+  </details>
+
+  <div id="planProgress" class="progress-wrap" hidden>
+    <div class="progress-head">
+      <strong id="planStage">Starting…</strong>
+      <span id="planDetail"></span>
+    </div>
+    <div class="progress-bar"><div id="planFill" class="progress-fill progress-fill-indef"></div></div>
   </div>
 </section>
 
@@ -266,9 +337,71 @@
 
 <!-- ============================================================ REPORT TAB -->
 <section id="tab-report" class="tab-panel">
-  <div id="noReport" class="empty">
-    <h2>No report yet</h2>
-    <p>Finish an interview, or open a completed one from <strong>History</strong>.</p>
+  <!-- ------------------------------------------- all candidates, one shortlist -->
+  <div class="card">
+    <div class="card-head-row">
+      <div>
+        <h2>Candidate reports</h2>
+        <p class="sub" id="ovSub">Choose a shortlist to see who attended, how they scored,
+          and what was decided.</p>
+      </div>
+      <div class="toolbar-right">
+        <button class="btn btn-ghost" id="ovRefresh">Refresh</button>
+        <button class="btn btn-ghost" id="ovExport" disabled>⬇ Excel report</button>
+      </div>
+    </div>
+
+    <div class="dash-controls">
+      <label class="field field-grow">
+        <span>Shortlist</span>
+        <select id="ovShortlist"><option value="">Loading…</option></select>
+      </label>
+    </div>
+
+    <div class="stats" id="ovStats" hidden></div>
+
+    <div id="ovFilterBar" hidden>
+      <div class="filter-row">
+        <span class="filter-label">Attended</span>
+        <div class="chipset" id="ovAttendFilters"></div>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Decision</span>
+        <div class="chipset" id="ovDecisionFilters"></div>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Search</span>
+        <input id="ovSearch" type="search" placeholder="Candidate, role, email…" />
+        <button class="btn btn-link" id="ovClear">Clear filters</button>
+      </div>
+    </div>
+
+    <div class="table-scroll" id="ovTableWrap" hidden>
+      <table class="grid" id="ovGrid">
+        <thead>
+          <tr>
+            <th>Candidate</th>
+            <th>Current role</th>
+            <th class="col-narrow">Attended</th>
+            <th class="col-narrow">Answers</th>
+            <th class="col-narrow">Interview</th>
+            <th class="col-narrow">Decision</th>
+            <th>Reviewed by</th>
+            <th class="col-narrow">Resume ATS</th>
+            <th class="col-tiny"></th>
+          </tr>
+        </thead>
+        <tbody id="ovBody"></tbody>
+      </table>
+    </div>
+    <p class="hint" id="ovHint" hidden>“Attended” means they answered at least one question.
+      Someone invited who never opened their link counts as not attended. Decisions are
+      recorded on an individual report below — open one to set or change it.</p>
+  </div>
+
+  <div id="noReport" class="empty empty-tight">
+    <h2>No individual report open</h2>
+    <p>Open a candidate above, or pick a completed interview from <strong>History</strong>.</p>
   </div>
 
   <div id="reportBody" hidden>
@@ -295,6 +428,7 @@
             <span class="pill pill-muted" id="repConfidence"></span>
           </div>
           <p class="score-summary" id="repSummary"></p>
+          <div id="repWeightNote" class="inline-note" hidden></div>
           <div id="repConfWhy" class="inline-note inline-note-quiet" hidden></div>
         </div>
       </div>
@@ -363,18 +497,46 @@
 <section id="tab-history" class="tab-panel">
   <div class="card">
     <div class="card-head-row">
-      <h2>Interviews</h2>
+      <div>
+        <h2>Interviews</h2>
+        <p class="sub" id="histSub"></p>
+      </div>
       <button class="btn btn-ghost" id="refreshHistory">Refresh</button>
     </div>
+
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <label class="check bulk-all">
+          <input type="checkbox" id="histSelectAll" /> Select all shown
+        </label>
+        <div class="chipset" id="histFilters"></div>
+        <input id="histSearch" type="search" placeholder="Search candidate, role, id…" />
+      </div>
+      <div class="toolbar-right">
+        <span class="hint" id="histSelCount">none selected</span>
+        <button class="btn btn-ghost" id="histExport" disabled>⬇ Excel for selected</button>
+        <button class="btn btn-danger" id="histDelete" disabled>🗑 Delete selected</button>
+      </div>
+    </div>
+
     <div id="historyList" class="history-list"></div>
   </div>
 </section>
 </main>
 
+<!-- Side drawer: the invitation text for one candidate -->
+<aside id="drawer" class="drawer" hidden>
+  <div class="drawer-head">
+    <h3 id="drawerTitle">Invitation</h3>
+    <button class="btn btn-link" id="closeDrawer">✕</button>
+  </div>
+  <div id="drawerBody" class="drawer-body"></div>
+</aside>
+
 <div id="toast" class="toast" hidden></div>
 
 <script src="/static/avatar.js?v=1"></script>
 <script src="/static/speech.js?v=1"></script>
-<script src="/static/app.js?v=1"></script>
+<script src="/static/app.js?v=3"></script>
 </body>
 </html>

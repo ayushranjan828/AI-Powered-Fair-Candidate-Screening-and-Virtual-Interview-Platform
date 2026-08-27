@@ -12,7 +12,7 @@ from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFil
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import ai_agent, config, dnsfix, excel_export, scoring, storage
+from . import ai_agent, config, dnsfix, excel_export, interview_link, scoring, storage
 from .extractors import SUPPORTED_DOC_EXTS, extract_upload
 
 app = FastAPI(title="AI-Powered Fair Candidate Screening", version="1.0.0")
@@ -412,17 +412,31 @@ async def remove_history(history_id: str):
 # anywhere in this codebase. "Sending" records the draft as SENT locally.
 # The recruiter is shown the same thing in the UI.
 #
-# EXTENSION POINT - interview scheduling
-# The invitation deliberately does not promise a mechanism or a link, because
-# no interview stage exists yet. When you plug in your own AI interviewer:
-#   1. give each sent draft whatever handle your interviewer needs, in
-#      send_outreach() where the SENT fields are written;
-#   2. add that handle to the mail body - ai_agent.INVITE_SYSTEM tells the
-#      model what it may and may not promise the candidate;
-#   3. surface the results wherever you want them reviewed.
-# Wiring a real mail transport is a separate change again - see README.
+# INTERVIEW LINKS
+# Each draft carries a signed, per-candidate link that starts that candidate's
+# interview in the Virtual AI Interviewer app (backend/interview_link.py). The
+# link is minted at DRAFT time, not send time, so the recruiter reviews the exact
+# mail the candidate will get. It is re-minted on send only if it is missing, and
+# the sent copy freezes it.
+# The model never writes the URL: it marks the spot with a placeholder and
+# ai_agent.inject_link() substitutes the real address. A hallucinated interview
+# link is not a defect a candidate should ever have to discover.
 
 INVITE_ELIGIBLE = ("SHORTLISTED", "REVIEW")
+
+
+def _interview_link(session: dict, candidate_id: str) -> str:
+    """That candidate's interview link, or "" when links are switched off.
+
+    Keyed on the accepted history id when the shortlist has been accepted, and
+    on the session id otherwise, because the interviewer resolves candidates
+    from both. Accepting a shortlist after sending does not invalidate a link
+    that is already out.
+    """
+    if not config.INCLUDE_INTERVIEW_LINK or not interview_link.enabled():
+        return ""
+    key_id = session.get("accepted_history_id") or session.get("session_id")
+    return interview_link.link_for(key_id, candidate_id) or ""
 
 
 def _outreach_ctx(session: dict) -> dict:
@@ -463,6 +477,8 @@ async def get_outreach(session_id: str):
         "company": config.COMPANY_NAME,
         "recruiter_name": config.RECRUITER_NAME,
         "recruiter_email": config.RECRUITER_EMAIL,
+        "interview_links": config.INCLUDE_INTERVIEW_LINK and interview_link.enabled(),
+        "interview_base_url": interview_link.base_url(),
         "eligible": [
             {"candidate_id": c.get("candidate_id"),
              "candidate_name": c.get("candidate_name", "NA"),
@@ -523,12 +539,14 @@ async def draft_outreach(session_id: str, payload: dict = Body(default={})):
     async def one(client: httpx.AsyncClient, cand: dict) -> None:
         nonlocal failures
         cid = cand.get("candidate_id")
+        link = _interview_link(session, cid)
         async with semaphore:
             try:
-                drafted = await ai_agent.draft_interview_email(client, cand, rubric, ctx)
+                drafted = await ai_agent.draft_interview_email(client, cand, rubric,
+                                                               ctx, link)
                 source, note = "ai", ""
             except Exception as exc:  # noqa: BLE001
-                drafted = ai_agent.fallback_email(cand, rubric, ctx)
+                drafted = ai_agent.fallback_email(cand, rubric, ctx, link)
                 source, note = "fallback", f"AI draft failed: {exc}"
                 async with lock:
                     failures += 1
@@ -550,6 +568,8 @@ async def draft_outreach(session_id: str, payload: dict = Body(default={})):
             "edited_at": None,
             "sent_at": None,
             "send_mode": config.EMAIL_SEND_MODE,
+            "interview_link": link,
+            "link_placement": drafted.get("link_placement", "none"),
         }
 
     timeout = httpx.Timeout(config.REQUEST_TIMEOUT_SECONDS)
@@ -627,6 +647,15 @@ async def send_outreach(session_id: str, payload: dict = Body(default={})):
                                       "Review tab first."})
             continue
 
+        # A draft written before links were switched on has none; mint it now
+        # rather than sending an invitation with no way in.
+        if not draft.get("interview_link"):
+            minted = _interview_link(session, cid)
+            if minted:
+                body, placement = ai_agent.inject_link(draft["body"], minted)
+                draft.update({"body": body, "interview_link": minted,
+                              "link_placement": placement})
+
         draft.update({
             "status": "SENT",
             "sent_at": storage.now_iso(),
@@ -635,11 +664,13 @@ async def send_outreach(session_id: str, payload: dict = Body(default={})):
             # the draft can never rewrite history.
             "sent_subject": draft["subject"],
             "sent_body": draft["body"],
+            "sent_interview_link": draft.get("interview_link", ""),
         })
         drafts[cid] = draft
         sent.append({"candidate_id": cid,
                      "candidate_name": draft.get("candidate_name", "NA"),
-                     "email_id": draft.get("email_id")})
+                     "email_id": draft.get("email_id"),
+                     "interview_link": draft.get("interview_link", "")})
 
     session["outreach"] = drafts
     storage.save_session(session)

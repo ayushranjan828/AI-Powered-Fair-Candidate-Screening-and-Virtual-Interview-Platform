@@ -65,6 +65,141 @@ def _join(values) -> str:
     return str(values or "")
 
 
+SUMMARY_COLUMNS = [
+    ("candidate_name", "Candidate", 26),
+    ("email_id", "Email", 30),
+    ("current_role", "Current role", 34),
+    ("attendance_label", "Attended?", 16),
+    ("answered", "Questions answered", 19),
+    ("overall_score", "Interview score (%)", 19),
+    ("verdict", "AI verdict", 16),
+    ("confidence", "Report confidence", 17),
+    ("decision_label", "Human decision", 18),
+    ("reviewer", "Reviewed by", 20),
+    ("reviewed_at", "Reviewed at", 22),
+    ("override_score", "Overridden score", 17),
+    ("ats_score", "Resume ATS (%)", 16),
+    ("stage_label", "Stage", 16),
+    ("link_state", "Interview link", 20),
+    ("interview_id", "Interview ID", 20),
+]
+
+ATTENDANCE_LABELS = {
+    "COMPLETED": "Yes - completed",
+    "PARTIAL": "Yes - did not finish",
+    "NOT_STARTED": "No - never started",
+    "NO_INTERVIEW": "No - not invited",
+}
+
+DECISION_LABELS = {
+    "PROCEED": "Proceed",
+    "HOLD": "Hold",
+    "REJECT": "Do not proceed",
+    "": "Not decided",
+}
+
+
+def build_summary_workbook(board: dict) -> bytes:
+    """One row per shortlisted candidate: who attended, how they scored, and what
+    a human decided.
+
+    This is the report a recruiter actually circulates - the per-interview
+    workbook from build_workbook() is the drill-down for one person.
+    """
+    rows = board.get("rows", [])
+    wb = Workbook()
+
+    ws = wb.active
+    ws.title = "Candidates"
+    ws.append([c[1] for c in SUMMARY_COLUMNS])
+    _style_header(ws, SUMMARY_COLUMNS)
+    ws.freeze_panes = "B2"
+
+    for row in rows:
+        iv = row.get("interview") or {}
+        review = iv.get("human_review") or {}
+        invite = row.get("invite") or {}
+        link_state = ("withdrawn" if invite.get("revoked")
+                      else "sent" if invite.get("sent_at")
+                      else "issued" if invite else "none")
+        values = {
+            "candidate_name": row.get("candidate_name", "NA"),
+            "email_id": row.get("email_id", "NA"),
+            "current_role": row.get("current_role", "NA"),
+            "attendance_label": ATTENDANCE_LABELS.get(row.get("attendance"), "NA"),
+            "answered": iv.get("answered", 0),
+            "overall_score": iv.get("overall_score") if iv.get("overall_score") is not None else "",
+            "verdict": (iv.get("verdict") or "").replace("_", " ").title(),
+            "confidence": iv.get("confidence", ""),
+            "decision_label": DECISION_LABELS.get(row.get("decision", ""), "Not decided"),
+            "reviewer": review.get("reviewer", ""),
+            "reviewed_at": review.get("reviewed_at", ""),
+            "override_score": review.get("override_score")
+                              if review.get("override_score") is not None else "",
+            "ats_score": row.get("ats_score", ""),
+            "stage_label": (row.get("stage") or "").replace("_", " ").title(),
+            "link_state": link_state,
+            "interview_id": iv.get("interview_id", ""),
+        }
+        ws.append([values.get(key, "") for key, _, _ in SUMMARY_COLUMNS])
+        line = ws.max_row
+        for col in range(1, len(SUMMARY_COLUMNS) + 1):
+            ws.cell(row=line, column=col).alignment = Alignment(vertical="top", wrap_text=True)
+        # Colour the attendance and score cells so the split is readable at a glance.
+        if not row.get("attended"):
+            ws.cell(row=line, column=4).fill = BAD_FILL
+        elif row.get("attendance") == "PARTIAL":
+            ws.cell(row=line, column=4).fill = MID_FILL
+        else:
+            ws.cell(row=line, column=4).fill = GOOD_FILL
+        fill = _fill_for(iv.get("overall_score"))
+        if fill:
+            ws.cell(row=line, column=6).fill = fill
+
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(SUMMARY_COLUMNS))}{max(ws.max_row, 1)}"
+
+    # ---- run metadata --------------------------------------------------------
+    stats = board.get("stats", {})
+    attendance = stats.get("attendance", {})
+    decisions = stats.get("decisions", {})
+    meta = wb.create_sheet("Summary")
+    meta.column_dimensions["A"].width = 34
+    meta.column_dimensions["B"].width = 60
+    for label, value in [
+        ("Role", board.get("job_title", "NA")),
+        ("Shortlist", board.get("history_id", "NA")),
+        ("Shortlist accepted", board.get("accepted_at", "NA")),
+        ("", ""),
+        ("Shortlisted candidates", stats.get("total", 0)),
+        ("Attended the interview", stats.get("attended", 0)),
+        ("  of which completed", attendance.get("COMPLETED", 0)),
+        ("  of which unfinished", attendance.get("PARTIAL", 0)),
+        ("Did NOT attend", stats.get("not_attended", 0)),
+        ("  invited, never started", attendance.get("NOT_STARTED", 0)),
+        ("  never invited", attendance.get("NO_INTERVIEW", 0)),
+        ("", ""),
+        ("Decision: Proceed", decisions.get("PROCEED", 0)),
+        ("Decision: Hold", decisions.get("HOLD", 0)),
+        ("Decision: Do not proceed", decisions.get("REJECT", 0)),
+        ("Decision: not recorded yet", decisions.get("NONE", 0)),
+        ("", ""),
+        ("Average interview score (%)",
+         stats.get("average_score") if stats.get("average_score") is not None else "NA"),
+        ("", ""),
+        ("Note", "Resume ATS is the screening-stage score. It forms no part of the "
+                 "interview score and the interviewer is never told it."),
+    ]:
+        meta.append([label, value])
+    for cell in meta["A"]:
+        cell.font = Font(bold=True)
+    for cell in meta["B"]:
+        cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
 def build_workbook(interview: dict) -> bytes:
     report = interview.get("report") or {}
     candidate = interview.get("candidate") or {}

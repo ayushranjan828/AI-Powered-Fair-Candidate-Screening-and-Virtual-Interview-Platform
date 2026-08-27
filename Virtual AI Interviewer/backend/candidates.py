@@ -116,6 +116,56 @@ def pick_candidate(history_id: str, candidate_id: str) -> dict | None:
     return None
 
 
+# ------------------------------------------------------------- invite resolution
+def _session_files() -> list[Path]:
+    """Screening sessions, de-duplicated by file name. Same two-location story
+    as _history_files()."""
+    seen: set[str] = set()
+    found: list[Path] = []
+    for base in config.SCREENING_DATA_DIRS:
+        directory = base / "sessions"
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.glob("*.json")):
+            if path.name in seen:
+                continue
+            seen.add(path.name)
+            found.append(path)
+    return found
+
+
+def find_for_invite(key_id: str, candidate_id: str) -> dict | None:
+    """Resolve an interview link's ids to a candidate and their role.
+
+    An invitation can be sent before the recruiter accepts the shortlist into
+    history, so the link's key is whichever id existed at the time - a history id
+    or a session id. Both are searched, history first because an accepted record
+    is the reviewed one.
+
+    Returns the candidate row plus the JD context needed to plan an interview, or
+    None if the link does not point at anybody we can find.
+    """
+    for loader, key_field in ((_history_files, "history_id"), (_session_files, "session_id")):
+        for path in loader():
+            record = _read(path)
+            if not record:
+                continue
+            if record.get(key_field) != key_id and path.stem != key_id:
+                continue
+            for row in record.get("candidates", []):
+                if row.get("candidate_id") != candidate_id:
+                    continue
+                return {
+                    "candidate": dict(row),
+                    "job_title": record.get("job_title", NA),
+                    "jd_text": record.get("jd_text", ""),
+                    "jd_analysis": record.get("jd_analysis", {}) or {},
+                    "source_kind": key_field,
+                    "source_id": key_id,
+                }
+    return None
+
+
 # --------------------------------------------------------------- normalisation
 def _text(value) -> str:
     if value is None:

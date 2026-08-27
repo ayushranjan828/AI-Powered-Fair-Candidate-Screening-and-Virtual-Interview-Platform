@@ -233,12 +233,18 @@ Rules:
 - expected_points: 2-4 things a strong answer would touch on. This is the grading
   key, not something the candidate is shown.
 - The first question must be the introduction and the last must be the closing.
-- Do not number the questions in their text."""
+- Do not number the questions in their text.
+- Use ONLY the categories listed above. They are what this interview is meant to
+  cover and the list is closed - do not introduce any other category, however
+  tempting the resume makes it look. If the material for one is thin, ask a
+  broader question inside that category rather than reaching for another."""
 
 
-def _category_help() -> str:
+def _category_help(keys=None) -> str:
+    wanted = list(keys) if keys else list(config.CATEGORIES)
     return "\n".join(
-        f"- {key}: {meta['about']}" for key, meta in config.CATEGORIES.items()
+        f"- {key}: {config.CATEGORIES[key]['about']}"
+        for key in wanted if key in config.CATEGORIES
     )
 
 
@@ -259,32 +265,51 @@ async def build_question_plan(
                   "good_to_have_skills", "key_responsibilities", "typical_challenges")
         if rubric.get(k)
     }
+    # Only the categories the recruiter asked for are offered. They used to all be
+    # listed with the mix as a mere suggestion, and the model would cheerfully add
+    # a project question to a plan that had excluded projects.
+    allowed = [k for k in config.CATEGORIES if k in mix]
     prompt = PLAN_USER_TEMPLATE.format(
         role_title=rubric.get("role_title") or "NA",
         rubric=json.dumps(rubric_slim, ensure_ascii=False, indent=2) or "NA",
         resume=candidates.resume_context(candidate),
         count=count,
         mix=_mix_text(mix),
-        category_help=_category_help(),
-        category_names=", ".join(f'"{k}"' for k in config.CATEGORIES),
+        category_help=_category_help(allowed),
+        category_names=", ".join(f'"{k}"' for k in allowed),
     )
     data = await _chat_json(client, PLAN_SYSTEM, prompt, max_tokens=3500)
 
     questions = data.get("questions")
     if not isinstance(questions, list) or not questions:
         raise AIError("the plan came back with no questions")
+
+    cleaned = [_clean_question(q, allowed) for q in questions if isinstance(q, dict)]
+    # A stray is kept with its true category rather than silently relabelled: a
+    # question written to probe a project IS a project question whatever we call
+    # it, and evaluation.py weights it by that. The recruiter is told instead.
+    strays = sorted({q["category"] for q in cleaned if q["category"] not in allowed})
+
     return {
         "opening_line": str(data.get("opening_line") or "").strip(),
         "closing_line": str(data.get("closing_line") or "").strip(),
         "notes_for_reviewer": str(data.get("notes_for_reviewer") or "").strip(),
-        "questions": [_clean_question(q) for q in questions if isinstance(q, dict)],
+        "questions": cleaned,
+        "requested_categories": allowed,
+        "category_strays": strays,
     }
 
 
-def _clean_question(raw: dict) -> dict:
-    category = str(raw.get("category") or "technical").strip().lower()
+def _clean_question(raw: dict, allowed: list[str] | None = None) -> dict:
+    category = str(raw.get("category") or "").strip().lower()
     if category not in config.CATEGORIES:
-        category = "technical"
+        # An invented name falls back to a permitted BODY category - never intro
+        # or closing, which are one-per-interview, and no longer always
+        # "technical", which mislabelled plans that had excluded technical.
+        pool = [k for k in (allowed or list(config.CATEGORIES))
+                if k not in ("intro", "closing")]
+        category = max(pool, key=lambda k: config.CATEGORIES[k]["weight"]) if pool \
+            else (allowed or list(config.CATEGORIES))[0]
     difficulty = str(raw.get("difficulty") or "medium").strip().lower()
     if difficulty not in ("easy", "medium", "hard"):
         difficulty = "medium"
