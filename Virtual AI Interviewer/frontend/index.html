@@ -59,9 +59,10 @@
     <div class="sim-banner">
       <span class="sim-dot"></span>
       <div>
-        <strong>This app does not send email.</strong>
-        <span>It issues each candidate a link and hands you the text. Send it from your own
-          mail client, or copy the link — then <em>Mark as sent</em> records that you did.</span>
+        <strong>Invitations are sent from the screening app.</strong>
+        <span>This app does not issue or send links. Here you can read the invitation that
+          went out, see when it was sent, set a candidate's interview shape, and
+          deactivate a link if you need to stop it being used.</span>
       </div>
     </div>
 
@@ -70,25 +71,18 @@
         <div class="chipset" id="stageFilters"></div>
         <input id="dashSearch" type="search" placeholder="Search name, role, email…" />
       </div>
-      <div class="toolbar-right">
-        <span class="hint" id="selCount">none selected</span>
-        <button class="btn btn-ghost" id="issueSelected">🔗 Issue links</button>
-        <button class="btn btn-ghost" id="markSelected">✓ Mark as sent</button>
-        <button class="btn btn-ghost" id="copyAllLinks">Copy all links</button>
-      </div>
     </div>
 
     <div class="table-scroll">
       <table class="grid" id="dashGrid">
         <thead>
           <tr>
-            <th class="col-tiny"><input type="checkbox" id="selectAll" title="Select all shown" /></th>
             <th>Candidate</th>
             <th>Current role</th>
             <th class="col-narrow">Resume ATS</th>
             <th class="col-narrow">Stage</th>
             <th class="col-narrow">Interview</th>
-            <th class="col-wide">Interview link</th>
+            <th class="col-wide">Invitation</th>
             <th class="col-actions">Actions</th>
           </tr>
         </thead>

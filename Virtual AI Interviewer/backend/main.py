@@ -352,11 +352,16 @@ def _attendance(interview: dict | None) -> str:
     return "NOT_STARTED"
 
 
-def _row_stage(invite: dict | None, interview: dict | None) -> str:
+def _row_stage(invite: dict | None, interview: dict | None,
+               outreach: dict | None) -> str:
     """The single word the dashboard sorts and filters on.
 
     Deliberately derived rather than stored: a stored status would drift out of
     step with the interview records the moment anything happened elsewhere.
+
+    Inviting is the screening app's job, so everything before the interview comes
+    from its outreach record. The only thing this app contributes is the
+    withdrawal, which is the one lever it still has over a link it did not mint.
     """
     if interview:
         status = interview["status"]
@@ -369,10 +374,10 @@ def _row_stage(invite: dict | None, interview: dict | None) -> str:
         return "IN_PROGRESS"
     if invite and invite.get("revoked"):
         return "REVOKED"
-    if invite and invite.get("sent_at"):
+    if outreach and outreach.get("sent"):
         return "SENT"
-    if invite:
-        return "LINK_READY"
+    if outreach:
+        return "DRAFTED"
     return "NOT_INVITED"
 
 
@@ -389,6 +394,8 @@ async def dashboard(history_id: str):
 
     invites = storage.invites_for(history_id)
     overrides = storage.candidate_options_for(history_id)
+    # Read once for the whole shortlist: the screening session is a single file.
+    outreach = candidates.outreach_for(history_id)
     rows = []
     for cand in data["candidates"]:
         cid = cand["candidate_id"]
@@ -396,11 +403,19 @@ async def dashboard(history_id: str):
         interview = _interview_summary(storage.find_by_invite(history_id, cid))
         attendance = _attendance(interview)
         override = overrides.get(cid)
+        mail = outreach.get(cid)
         rows.append({
             **cand,
+            # Only what this app still owns: whether the link is withdrawn.
             "invite": invite,
+            # The invitation as the screening app has it. The body is left out
+            # here - it is several hundred words per candidate, and the drawer
+            # fetches it for the one row the recruiter opens.
+            "outreach": None if not mail else {
+                k: v for k, v in mail.items() if k != "body"
+            },
             "interview": interview,
-            "stage": _row_stage(invite, interview),
+            "stage": _row_stage(invite, interview, mail),
             # The interview shape this candidate will actually get.
             "options": (override or {}).get("options") or None,
             "options_note": (override or {}).get("note", ""),
@@ -706,77 +721,11 @@ async def clear_candidate_settings(shortlist_id: str, candidate_id: str):
     return {"ok": True, "options": normalise_options(None)}
 
 
-@app.post("/api/invites")
-async def issue_invites(payload: dict = Body(...)):
-    """Issue an interview link for one candidate, or for several at once.
-
-    Idempotent unless `regenerate` is set: re-issuing keeps the link the
-    candidate already has, so clicking the button twice cannot quietly invalidate
-    a link that is already in somebody's inbox.
-    """
-    if not interview_link.enabled():
-        raise HTTPException(503, "Interview links are not configured - set "
-                                 "INTERVIEW_LINK_SECRET or AZURE_OPENAI_API_KEY")
-
-    history_id = str(payload.get("history_id") or "").strip()
-    if not history_id:
-        raise HTTPException(400, "history_id is required")
-    shortlist = candidates.shortlist_candidates(history_id)
-    if not shortlist:
-        raise HTTPException(404, "That shortlist was not found")
-
-    wanted = payload.get("candidate_ids")
-    if wanted is not None and not isinstance(wanted, list):
-        raise HTTPException(400, "candidate_ids must be a list")
-    regenerate = bool(payload.get("regenerate"))
-    options = payload.get("options") or {}
-
-    known = {c["candidate_id"]: c for c in shortlist["candidates"]}
-    targets = [known[c] for c in wanted if c in known] if wanted else list(known.values())
-    if not targets:
-        raise HTTPException(400, "None of those candidates are on this shortlist")
-
-    issued, kept = [], []
-    for cand in targets:
-        cid = cand["candidate_id"]
-        existing = storage.get_invite(history_id, cid)
-        if existing and not existing.get("revoked") and not regenerate:
-            kept.append(existing)
-            continue
-
-        link = interview_link.link_for(history_id, cid)
-        if not link:
-            raise HTTPException(500, "Could not mint a link")
-        token = link.rsplit("/i/", 1)[-1]
-        record = {
-            "shortlist_id": history_id,
-            "candidate_id": cid,
-            "candidate_name": cand.get("candidate_name", "NA"),
-            "email_id": cand.get("email_id", "NA"),
-            "job_title": shortlist["job_title"],
-            "link": link,
-            "token_fingerprint": interview_link.token_fingerprint(token),
-            # A candidate with settings of their own keeps them; everybody else
-            # gets whatever the dashboard had selected when the link was issued.
-            "options": _effective_options(history_id, cid, options)[0],
-            "options_source": _effective_options(history_id, cid, options)[1],
-            "issued_at": storage.now_iso(),
-            "issued_by": str(payload.get("issued_by") or "NA").strip() or "NA",
-            "sent_at": None,
-            "sent_channel": "",
-            "sent_by": "",
-            "note": "",
-            "revoked": False,
-            "revoked_at": None,
-        }
-        # Re-issuing after a revoke clears the revoke, which is the whole point.
-        if existing and regenerate:
-            record["previous_fingerprint"] = existing.get("token_fingerprint")
-        storage.put_invite(record)
-        issued.append(record)
-
-    return {"ok": True, "issued": len(issued), "kept": len(kept),
-            "invites": issued + kept}
+# Shortlisted candidates are invited by the screening app, which drafts the mail,
+# mints the link and records what it sent. This app used to issue links too; it no
+# longer does, so that there is exactly one place a candidate can be invited from.
+# What remains here is what only this app can do: withdraw a link, and read back
+# the invitation that went out.
 
 
 @app.post("/api/interviews/{interview_id}/link")
@@ -844,14 +793,67 @@ def _require_invite(shortlist_id: str, candidate_id: str) -> dict:
     return invite
 
 
+def _invite_or_stub(shortlist_id: str, candidate_id: str) -> dict:
+    """The local invite record, invented if the link was minted elsewhere.
+
+    A link the screening app sent leaves nothing behind here, so withdrawing one
+    means writing the record that records the withdrawal. The stub holds no link
+    - this app never saw that token - only the fact, which is exactly what
+    _resolve_invite() checks when the candidate opens their link.
+    """
+    invite = storage.get_invite(shortlist_id, candidate_id)
+    if invite:
+        return invite
+
+    resolved = candidates.find_for_invite(shortlist_id, candidate_id) or {}
+    row = resolved.get("candidate", {})
+    return {
+        "shortlist_id": shortlist_id,
+        "candidate_id": candidate_id,
+        "candidate_name": row.get("candidate_name", "NA"),
+        "email_id": row.get("email_id", "NA"),
+        "job_title": resolved.get("job_title", "NA"),
+        "link": "",
+        "issued_by": "screening",
+        "issued_at": None,
+        "sent_at": None, "sent_channel": "", "sent_by": "", "note": "",
+        "revoked": False, "revoked_at": None,
+    }
+
+
 @app.get("/api/invites/{shortlist_id}/{candidate_id}/mail")
 async def invite_mail(shortlist_id: str, candidate_id: str):
-    """The invitation text, plus a mailto: URL for the recruiter's own client.
+    """The invitation for one candidate. Two sources, and the difference matters.
 
-    Deterministic, not AI-written: the screening app is where invitations get
-    personalised by the model. This is the plain version for a link issued
-    straight from the dashboard.
+    For anybody on a shortlist this returns what the screening app actually
+    drafted and sent - the real, model-personalised text, frozen at send time -
+    so the recruiter reads the mail the candidate received rather than a
+    reconstruction of it. Nothing here is editable; it is a record.
+
+    For a one-off interview prepared in this app the screening app has never
+    heard of the candidate, so the plain deterministic invitation is built
+    instead, with a mailto: for the recruiter's own client.
     """
+    if shortlist_id != ONE_OFF_KEY:
+        mail = candidates.sent_mail(shortlist_id, candidate_id)
+        if not mail:
+            raise HTTPException(404, "The screening app has not drafted an "
+                                     "invitation for that candidate")
+        address = str(mail["email_id"] or "")
+        return {
+            "source": "screening",
+            "subject": mail["subject"],
+            "body": mail["body"],
+            "link": mail["link"],
+            "to": address if "@" in address else "",
+            "has_email": mail["has_email"],
+            "sent": mail["sent"],
+            "sent_at": mail["sent_at"],
+            "send_mode": mail["send_mode"],
+            "edited": mail["edited"],
+            "mailto": "",
+        }
+
     invite = _require_invite(shortlist_id, candidate_id)
     name = candidates.display_name(invite.get("candidate_name"))
     role = invite.get("job_title") or "the role"
@@ -876,8 +878,9 @@ async def invite_mail(shortlist_id: str, candidate_id: str):
     email = invite.get("email_id") or ""
     to = email if "@" in email else ""
     mailto = (f"mailto:{quote(to)}?subject={quote(subject)}&body={quote(body)}")
-    return {"subject": subject, "body": body, "mailto": mailto,
-            "to": to, "has_email": bool(to), "link": invite["link"]}
+    return {"source": "local", "subject": subject, "body": body, "mailto": mailto,
+            "to": to, "has_email": bool(to), "link": invite["link"],
+            "sent": bool(invite.get("sent_at")), "sent_at": invite.get("sent_at")}
 
 
 @app.post("/api/invites/{shortlist_id}/{candidate_id}/sent")
@@ -901,8 +904,12 @@ async def mark_invite_sent(shortlist_id: str, candidate_id: str,
 @app.post("/api/invites/{shortlist_id}/{candidate_id}/revoke")
 async def revoke_invite(shortlist_id: str, candidate_id: str,
                         payload: dict = Body(default={})):
-    """Withdraw a link, or put a withdrawn one back."""
-    invite = _require_invite(shortlist_id, candidate_id)
+    """Withdraw a link, or put a withdrawn one back.
+
+    Works on a link this app issued and on one the screening app sent, which is
+    the common case now - see _invite_or_stub().
+    """
+    invite = _invite_or_stub(shortlist_id, candidate_id)
     revoke = bool(payload.get("revoked", True))
 
     existing = storage.find_by_invite(shortlist_id, candidate_id)

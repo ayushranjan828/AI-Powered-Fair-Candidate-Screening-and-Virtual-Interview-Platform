@@ -44,7 +44,7 @@ Open <http://127.0.0.1:8010>. Click the **AI** pill in the header for a live con
 
 ## Flow
 
-**1 · Dashboard** — pick an accepted screening shortlist and every candidate on it appears as a row: their resume score, where they have got to, their interview link, their interview score, and every action you can take on them. This is where the recruiter drives everything — see [The recruiter dashboard](#the-recruiter-dashboard).
+**1 · Dashboard** — pick an accepted screening shortlist and every candidate on it appears as a row: their resume score, where they have got to, whether their invitation has been sent, their interview score, and every action you can take on them. This is where the recruiter drives everything — see [The recruiter dashboard](#the-recruiter-dashboard).
 
 **2 · Interview** — the 2D interviewer greets the candidate by name, then works through the plan. Each question is spoken aloud with a live caption; the candidate answers by voice (transcribed in the browser) or by typing. Between questions the interviewer acknowledges the answer and either moves on or follows up on it. **Repeat question**, **Mute voice** and **Skip** are always available.
 
@@ -68,49 +68,45 @@ call — the browser never fans out per candidate to work out who has an intervi
 | Resume ATS | The screening score, **for context only** |
 | Stage | Where this candidate has got to |
 | Interview | Score and verdict once evaluated, otherwise answers so far |
-| Interview link | The issued link, shortened, with Copy |
+| Invitation | When the screening app sent it, or that it is still a draft |
 | Actions | Everything below |
 
 **Stage** is derived on every request, never stored — a stored status would drift out of step with
 the interview records the moment anything happened elsewhere:
 
-`Not invited` → `Link ready` → `Sent` → `Preparing` → `In progress` → `Completed`,
-plus `Withdrawn` for a revoked link and `Discarded` for an interview the recruiter ended.
+`Not invited` → `Draft ready` → `Sent` → `Preparing` → `In progress` → `Completed`,
+plus `Withdrawn` for a deactivated link and `Discarded` for an interview the recruiter ended.
 
-### Issuing links
+Everything before `Preparing` comes from the screening app's outreach record, not from anything
+this app stores.
 
-Select any number of candidates and **Issue links**, or issue one from its row. Issuing is
-**idempotent**: re-issuing keeps the link the candidate already has, so pressing the button twice
-cannot quietly invalidate a link that is already sitting in somebody's inbox. `regenerate` mints a
-fresh one deliberately.
+### Inviting is the screening app's job
 
-A link **carries the settings it was issued with**. Change the question count in *Interview
-settings*, issue a link, and that candidate's interview uses those numbers even though they start it
-days later. Links issued by the screening app have no such record and fall back to the configured
-defaults.
+**This app neither issues nor sends interview links for shortlisted candidates.** The screening app
+drafts each invitation from the candidate's own resume, mints the link, and freezes the exact text
+at the moment of sending. Having one place a candidate can be invited from is the point: two
+issuers would mean two links per person and no single answer to "what were they actually sent?".
 
-### Sending them
+What the dashboard offers instead:
 
-**This app does not send email**, and the dashboard says so on a banner. There is no SMTP client or
-mail SDK here, the same as the screening app. What it gives you instead:
+- **Invitation…** opens a drawer with the mail the screening app sent — the real, frozen subject
+  and body, and when it went. It is a record, not a draft: there is nothing to edit and nothing to
+  send. **Copy the text** is there for quoting it elsewhere.
+- The **Invitation** column reports the same thing at a glance: `sent <date>`, or `draft ready` for
+  an invitation the screening app has written but not yet sent.
 
-- **Invitation…** opens a drawer with the full invitation text and an **Open in my mail app**
-  button — a `mailto:` URL pre-filled with the address, subject and body. That is a real send, by
-  your own mail client, not by us.
-- **Copy the text** / **Copy just the link** for any other channel.
-- **Copy all links** copies every issued link in the current view as tab-separated
-  `name⇥email⇥link`, ready to paste into a mail-merge or a spreadsheet.
-- **Mark as sent** records that you sent it, with a timestamp and channel. It is an audit note, not
-  a transmission, and it is what moves a row from `Link ready` to `Sent`.
-
-For bulk, personalised, AI-written invitations, use the screening app's Invite tab instead — it
-drafts one per candidate from their own resume and embeds the same kind of link.
+Read at `GET /api/invites/{shortlist_id}/{candidate_id}/mail`, which resolves the shortlist to its
+screening session and returns that candidate's `sent_subject` / `sent_body` / `sent_at`. A one-off
+candidate (below) has no screening record, so the same route builds the plain local invitation for
+them instead — the one case where this app still hands out a link.
 
 ### Withdrawing a link
 
-**Withdraw** revokes a link. The token is stateless and cannot be un-signed, so revocation is
+**Deactivate link** revokes a link, and works on a link this app never issued — the screening
+app's links leave no record here, so deactivating one writes the record that holds the withdrawal.
+It stores no token: this app never saw it. The token is stateless and cannot be un-signed, so revocation is
 checked server-side on every use: both `/api/invite/{token}` and `/api/invite/{token}/start` then
-return `403` with a message telling the candidate to contact the recruiter. **Restore** puts it
+return `403` with a message telling the candidate to contact the recruiter. **Restore link** puts it
 back. A completed interview cannot be withdrawn — there is nothing left to stop.
 
 ### Settings for one candidate
@@ -163,10 +159,12 @@ Precedence, in order:
 2. otherwise whatever the dashboard has selected at the moment you act;
 3. otherwise the `.env` defaults.
 
-Saving also **updates a link that has already been issued but not yet used**, so the
-change actually reaches the candidate rather than applying to nobody. An interview
-already under way keeps the plan it started with, and the drawer says so instead of
-pretending otherwise. **Use the defaults instead** drops the override.
+A link sent by the screening app froze no settings, so the override is read when the
+candidate opens it and the change reaches them either way. Where this app did issue
+the link — a one-off — saving **updates that link too**, as long as it has not been
+used. An interview already under way keeps the plan it started with, and the drawer
+says so instead of pretending otherwise. **Use the defaults instead** drops the
+override.
 
 Stored in `data/candidate_options.json`, separate from the invite record, because
 settings are decided before (and independently of) any link — and are still wanted

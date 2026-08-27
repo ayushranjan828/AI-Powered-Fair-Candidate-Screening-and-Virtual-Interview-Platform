@@ -30,7 +30,6 @@
     cfg: null,
     dash: null,               // the loaded dashboard payload for one shortlist
     historyId: null,          // which shortlist is on screen
-    selected: new Set(),      // candidate ids ticked in the dashboard
     stageFilter: "ALL",
     dashQuery: "",
     interviewId: null,
@@ -319,7 +318,7 @@
 
   const STAGES = {
     NOT_INVITED: { label: "Not invited", cls: "pill-muted" },
-    LINK_READY:  { label: "Link ready", cls: "pill-brand" },
+    DRAFTED:     { label: "Draft ready", cls: "pill-brand" },
     SENT:        { label: "Sent", cls: "pill-warn" },
     PREPARING:   { label: "Preparing", cls: "pill-muted" },
     IN_PROGRESS: { label: "In progress", cls: "pill-live" },
@@ -336,16 +335,6 @@
       state.dashQuery = e.target.value.trim().toLowerCase();
       renderDashboard();
     });
-    $("selectAll").addEventListener("change", (e) => {
-      visibleRows().forEach((r) => {
-        if (e.target.checked) state.selected.add(r.candidate_id);
-        else state.selected.delete(r.candidate_id);
-      });
-      renderDashboard();
-    });
-    $("issueSelected").addEventListener("click", () => issueLinks([...state.selected]));
-    $("markSelected").addEventListener("click", () => markSent([...state.selected]));
-    $("copyAllLinks").addEventListener("click", copyAllLinks);
 
     const bindRange = (id, out, format) => {
       const input = $(id);
@@ -485,15 +474,14 @@
       note.textContent = "No rubric on this record — the interviewer will read the JD itself.";
     }
 
-    // Drop selections for candidates that are no longer listed.
-    const ids = new Set(d.rows.map((r) => r.candidate_id));
-    [...state.selected].forEach((id) => { if (!ids.has(id)) state.selected.delete(id); });
-
     if (!d.links_enabled) {
+      // Still worth saying: without the shared secret this app cannot verify the
+      // links the screening app sends, so no candidate can get in.
       const empty = $("shortlistEmpty");
       empty.hidden = false;
-      empty.textContent = "Interview links are not configured on this server, so links cannot "
-        + "be issued. Set INTERVIEW_LINK_SECRET (or AZURE_OPENAI_API_KEY) in .env.";
+      empty.textContent = "Interview links are not configured on this server, so links sent "
+        + "by the screening app cannot be opened. Set INTERVIEW_LINK_SECRET (or "
+        + "AZURE_OPENAI_API_KEY) in .env - it must match the screening app's.";
     }
 
     renderDashboard();
@@ -516,7 +504,7 @@
     if (!d) return;
 
     $("dashSub").textContent = `${d.job_title} · ${d.stats.total} shortlisted · `
-      + `accepted ${when(d.accepted_at)} · links valid ${d.link_ttl_days} days`;
+      + `accepted ${when(d.accepted_at)}`;
 
     const s = d.stats;
     const stats = [
@@ -524,7 +512,7 @@
       ["Not invited", s.counts.NOT_INVITED || 0, s.counts.NOT_INVITED ? "warn" : ""],
       // Named for what it means to the recruiter: invited, not started yet.
       // A candidate who has begun is counted under "In progress" instead.
-      ["Awaiting start", (s.counts.LINK_READY || 0) + (s.counts.SENT || 0), ""],
+      ["Awaiting start", (s.counts.DRAFTED || 0) + (s.counts.SENT || 0), ""],
       ["In progress", (s.counts.IN_PROGRESS || 0) + (s.counts.PREPARING || 0), ""],
       ["Completed", s.completed, s.completed ? "ok" : ""],
       ["Average score", s.average_score == null ? "—" : `${s.average_score}%`, ""],
@@ -536,7 +524,7 @@
 
     const counts = { ALL: d.rows.length };
     d.rows.forEach((r) => { counts[r.stage] = (counts[r.stage] || 0) + 1; });
-    const order = ["ALL", "NOT_INVITED", "LINK_READY", "SENT", "IN_PROGRESS",
+    const order = ["ALL", "NOT_INVITED", "DRAFTED", "SENT", "IN_PROGRESS",
                    "COMPLETED", "ABANDONED", "REVOKED"];
     $("stageFilters").innerHTML = order
       .filter((k) => k === "ALL" || counts[k])
@@ -552,26 +540,19 @@
     const rows = visibleRows();
     const body = $("dashBody");
     if (!rows.length) {
-      body.innerHTML = `<tr><td colspan="8" class="sub" style="padding:18px">`
+      body.innerHTML = `<tr><td colspan="7" class="sub" style="padding:18px">`
         + `No candidates match this filter.</td></tr>`;
     } else {
       body.innerHTML = rows.map(dashRow).join("");
       wireDashRows();
     }
 
-    const n = state.selected.size;
-    $("selCount").textContent = n ? `${n} selected` : "none selected";
-    $("issueSelected").disabled = !n || !d.links_enabled;
-    $("markSelected").disabled = !n;
-    const shown = rows.map((r) => r.candidate_id);
-    $("selectAll").checked = shown.length > 0 && shown.every((id) => state.selected.has(id));
   }
 
   function dashRow(r) {
     const stage = STAGES[r.stage] || STAGES.NOT_INVITED;
     const iv = r.interview;
     const inv = r.invite;
-    const picked = state.selected.has(r.candidate_id);
 
     const score = iv && iv.overall_score != null
       ? `<span class="score ${band(iv.overall_score)}">${pct(iv.overall_score)}</span>`
@@ -581,21 +562,21 @@
         ? `<span class="sub">${iv.answered} of ~${iv.planned_total || "?"} answered</span>`
         : `<span class="sub">—</span>`;
 
-    const linkCell = inv
-      ? `<div class="link-cell">
-           <code class="link-short" title="${esc(inv.link)}">${esc(shortLink(inv.link))}</code>
-           <button class="btn btn-ghost btn-xs" data-copy="${esc(inv.link)}">Copy</button>
-           ${inv.revoked
-             ? `<span class="pill pill-bad">withdrawn</span>`
-             : inv.sent_at
-               ? `<span class="sub">sent ${when(inv.sent_at)}</span>`
-               : `<span class="sub">not sent yet</span>`}
-         </div>`
-      : `<span class="sub">no link issued</span>`;
+    // Invitations are the screening app's doing; this column reports what it did.
+    const out = r.outreach;
+    const inviteCell = `
+      <div class="link-cell">
+        ${out
+          ? out.sent
+            ? `<span class="sub">sent ${when(out.sent_at)}</span>`
+            : `<span class="pill pill-brand">draft ready</span>
+               <span class="sub">not sent yet</span>`
+          : `<span class="sub">not invited from screening</span>`}
+        ${inv && inv.revoked ? `<span class="pill pill-bad">withdrawn</span>` : ""}
+      </div>`;
 
     return `
-    <tr data-cid="${esc(r.candidate_id)}" class="${picked ? "picked" : ""}">
-      <td><input type="checkbox" data-pick="${esc(r.candidate_id)}" ${picked ? "checked" : ""} /></td>
+    <tr data-cid="${esc(r.candidate_id)}">
       <td><strong>${esc(properName(r.candidate_name))}</strong><br />
           <span class="sub">${esc(r.email_id)}</span></td>
       <td class="cell-role">${esc(clip(r.current_role, 70))}
@@ -603,7 +584,7 @@
       <td><span class="score ${band(r.ats_score)}">${r.ats_score ?? "—"}%</span></td>
       <td><span class="pill ${stage.cls}">${esc(stage.label)}</span></td>
       <td>${score}</td>
-      <td>${linkCell}</td>
+      <td>${inviteCell}</td>
       <td class="row-actions">${rowActions(r)}</td>
     </tr>`;
   }
@@ -623,22 +604,19 @@
                   >⚙ Settings</button>`);
     }
 
-    if (!inv) {
-      // No point offering a link to somebody who has already been interviewed -
-      // the invite routes would refuse it anyway.
-      if (!done) {
-        out.push(`<button class="btn btn-primary btn-xs" data-issue="${cid}">Issue link</button>`);
-      }
-    } else {
-      out.push(`<button class="btn btn-ghost btn-xs" data-mail="${cid}">Invitation…</button>`);
-      if (!inv.sent_at && !inv.revoked) {
-        out.push(`<button class="btn btn-ghost btn-xs" data-sent="${cid}">Mark sent</button>`);
-      }
-      if (inv.revoked) {
-        out.push(`<button class="btn btn-ghost btn-xs" data-unrevoke="${cid}">Restore</button>`);
-      } else if (!iv || iv.status !== "completed") {
-        out.push(`<button class="btn btn-ghost btn-xs" data-revoke="${cid}">Withdraw</button>`);
-      }
+    // Reading the invitation only makes sense once the screening app has written
+    // one; withdrawing works whether or not this app ever saw the link.
+    if (r.outreach) {
+      out.push(`<button class="btn btn-ghost btn-xs" data-mail="${cid}"
+                  title="Read the invitation the screening app sent"
+                  >Invitation…</button>`);
+    }
+    if (inv && inv.revoked) {
+      out.push(`<button class="btn btn-ghost btn-xs" data-unrevoke="${cid}">Restore link</button>`);
+    } else if (!done && r.outreach) {
+      out.push(`<button class="btn btn-ghost btn-xs" data-revoke="${cid}"
+                  title="Stop this candidate's link from opening an interview"
+                  >Deactivate link</button>`);
     }
 
     if (iv && iv.overall_score != null) {
@@ -654,29 +632,10 @@
     return out.join(" ") + (badge ? `<div class="row-badge">${badge}</div>` : "");
   }
 
-  /** A link is ~110 characters of token; show enough to tell two apart. */
-  function shortLink(link) {
-    const token = String(link || "").split("/i/")[1] || "";
-    return token ? `…/i/${token.slice(0, 12)}…` : String(link || "");
-  }
-
   function wireDashRows() {
     const body = $("dashBody");
     const rowFor = (cid) => (state.dash.rows || []).find((r) => r.candidate_id === cid);
 
-    body.querySelectorAll("[data-pick]").forEach((box) =>
-      box.addEventListener("change", () => {
-        const id = box.dataset.pick;
-        if (box.checked) state.selected.add(id); else state.selected.delete(id);
-        renderDashboard();
-      }));
-
-    body.querySelectorAll("[data-copy]").forEach((b) =>
-      b.addEventListener("click", () => copyText(b.dataset.copy, "Link copied")));
-    body.querySelectorAll("[data-issue]").forEach((b) =>
-      b.addEventListener("click", () => issueLinks([b.dataset.issue])));
-    body.querySelectorAll("[data-sent]").forEach((b) =>
-      b.addEventListener("click", () => markSent([b.dataset.sent])));
     body.querySelectorAll("[data-revoke]").forEach((b) =>
       b.addEventListener("click", () => setRevoked(b.dataset.revoke, true)));
     body.querySelectorAll("[data-unrevoke]").forEach((b) =>
@@ -708,46 +667,17 @@
     }
   }
 
-  async function issueLinks(ids, regenerate) {
-    if (!ids.length) return toast("Select at least one candidate", "");
-    const btn = $("issueSelected");
-    btn.disabled = true;
-    try {
-      const res = await postJSON("/api/invites", {
-        history_id: state.historyId,
-        candidate_ids: ids,
-        regenerate: Boolean(regenerate),
-        options: currentOptions(),
-        issued_by: "recruiter",
-      });
-      await loadDashboard(state.historyId, true);
-      const parts = [];
-      if (res.issued) parts.push(`${res.issued} link${res.issued === 1 ? "" : "s"} issued`);
-      if (res.kept) parts.push(`${res.kept} already had one`);
-      toast(parts.join(" · ") || "Nothing to do", "ok");
-    } catch (err) {
-      toast(`Could not issue links: ${err.message}`, "err");
-    } finally {
-      btn.disabled = false;
-    }
-  }
+  /** Record that a one-off invitation went out.
 
-  async function markSent(ids, scopeId) {
-    // A one-off link has no dashboard row, so when a scope is given the ids are
-    // marked directly rather than filtered against the board.
-    const scope = scopeId || state.historyId;
-    const targets = scopeId
-      ? ids
-      : (state.dash?.rows || [])
-          .filter((r) => ids.includes(r.candidate_id) && r.invite && !r.invite.sent_at)
-          .map((r) => r.candidate_id);
-    if (!targets.length) return toast("Those candidates have no unsent link", "");
+   *  Only the off-shortlist flow reaches this: shortlisted candidates are sent
+   *  to by the screening app, which keeps its own record of what it sent.
+   */
+  async function markSent(ids, scope) {
     try {
-      await Promise.all(targets.map((id) => postJSON(
+      await Promise.all(ids.map((id) => postJSON(
         `/api/invites/${encodeURIComponent(scope)}/${encodeURIComponent(id)}/sent`,
         { channel: "manual", by: "recruiter" })));
-      if (!scopeId && state.historyId) await loadDashboard(state.historyId, true);
-      toast(`Marked ${targets.length} as sent`, "ok");
+      toast("Marked as sent", "ok");
     } catch (err) {
       toast(err.message, "err");
     }
@@ -766,7 +696,14 @@
     }
   }
 
-  /** Show the invitation text, with a button to open the recruiter's mail client. */
+  /** Show one candidate's invitation.
+   *
+   *  Two different things share this drawer. A shortlisted candidate's mail was
+   *  written and sent by the screening app, so it is shown as a record - the
+   *  frozen text, and when it went - with nothing to act on. A one-off candidate
+   *  prepared in this app has no screening record, so that mail is a draft the
+   *  recruiter still has to send, and keeps the buttons that help them do it.
+   */
   async function openMail(cid, scopeId, displayName) {
     const scope = scopeId || state.historyId;
     let mail;
@@ -778,41 +715,44 @@
     }
     const row = (state.dash?.rows || []).find((r) => r.candidate_id === cid);
     const who = displayName || row?.candidate_name || "";
+    const fromScreening = mail.source === "screening";
+
     $("drawerTitle").textContent = `Invitation · ${properName(who)}`;
     $("drawerBody").innerHTML = `
-      <div class="inline-note">This app does not send email. Open it in your own mail client,
-        or copy the text — then mark it as sent so the dashboard shows it went out.</div>
+      <div class="inline-note">${fromScreening
+        ? (mail.sent
+            ? `Sent by the screening app on ${esc(when(mail.sent_at))}. This is the exact
+               text that went out— it is a record, and cannot be changed here.`
+            : `The screening app has drafted this but has not sent it yet. Send it from
+               there; this app does not send email.`)
+        : `This app does not send email. Open it in your own mail client, or copy the
+           text — then mark it as sent so the record shows it went out.`}</div>
       <h4>To</h4>
       <p>${mail.has_email ? esc(mail.to)
-        : `<span class="warn-text">no email address on this row — copy the text instead</span>`}</p>
+        : `<span class="warn-text">no email address on this row</span>`}</p>
       <h4>Subject</h4>
       <p>${esc(mail.subject)}</p>
       <h4>Body</h4>
       <pre class="mail-body">${esc(mail.body)}</pre>
       <div class="drawer-actions">
-        ${mail.has_email
+        ${!fromScreening && mail.has_email
           ? `<a class="btn btn-primary" href="${esc(mail.mailto)}">Open in my mail app</a>` : ""}
         <button class="btn btn-ghost" id="copyMailBody">Copy the text</button>
-        <button class="btn btn-ghost" id="copyMailLink">Copy just the link</button>
-        <button class="btn btn-ghost" id="markMailSent">✓ Mark as sent</button>
+        ${fromScreening ? "" : `
+          <button class="btn btn-ghost" id="copyMailLink">Copy just the link</button>
+          <button class="btn btn-ghost" id="markMailSent">✓ Mark as sent</button>`}
       </div>`;
     $("drawer").hidden = false;
 
     $("copyMailBody").addEventListener("click", () =>
-      copyText(`${mail.subject}\n\n${mail.body}`, "Invitation copied"));
-    $("copyMailLink").addEventListener("click", () => copyText(mail.link, "Link copied"));
-    $("markMailSent").addEventListener("click", async () => {
+      copyText(`${mail.subject}
+
+${mail.body}`, "Invitation copied"));
+    $("copyMailLink")?.addEventListener("click", () => copyText(mail.link, "Link copied"));
+    $("markMailSent")?.addEventListener("click", async () => {
       await markSent([cid], scope);
       $("drawer").hidden = true;
     });
-  }
-
-  async function copyAllLinks() {
-    const rows = visibleRows().filter((r) => r.invite && !r.invite.revoked);
-    if (!rows.length) return toast("No issued links in this view", "");
-    const text = rows.map((r) =>
-      `${properName(r.candidate_name)}\t${r.email_id}\t${r.invite.link}`).join("\n");
-    await copyText(text, `${rows.length} links copied (tab separated)`);
   }
 
   /** Conduct this shortlisted candidate's interview here and now, no link. */
@@ -2338,6 +2278,7 @@
       }));
     list.querySelectorAll("[data-del]").forEach((b) =>
       b.addEventListener("click", () => deleteInterviews([b.dataset.del])));
+
   }
 
   /** Keep the header controls in step with what is ticked. */
