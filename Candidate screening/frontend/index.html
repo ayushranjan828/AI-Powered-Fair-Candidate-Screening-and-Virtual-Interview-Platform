@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI-Powered Fair Candidate Screening</title>
+<link rel="stylesheet" href="/static/styles.css?v=3" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">🎯</span>
+    <div>
+      <h1>Fair Candidate Screening</h1>
+      <p>AI resume agent &middot; JD-driven shortlisting &middot; human verified</p>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <span id="aiStatus" class="pill pill-muted">checking AI…</span>
+    <nav class="tabs">
+      <button class="tab active" data-tab="screen">1 · Screen</button>
+      <button class="tab" data-tab="results">2 · Review</button>
+      <button class="tab" data-tab="outreach">3 · Invite</button>
+      <button class="tab" data-tab="history">4 · History</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<!-- ============================================================ SCREEN TAB -->
+<section id="tab-screen" class="tab-panel active">
+  <div class="grid-2">
+
+    <div class="card">
+      <h2>Job Description</h2>
+      <label class="field">
+        <span>Job title <em>(optional — the agent infers it from the JD)</em></span>
+        <input id="jobTitle" type="text" placeholder="e.g. Senior Python Backend Engineer" />
+      </label>
+      <label class="field">
+        <span>Paste the full Job Description *</span>
+        <textarea id="jdText" rows="14" placeholder="Paste the complete JD here — responsibilities, must-have skills, experience, education, certifications…"></textarea>
+      </label>
+      <div class="hint">The agent turns the JD into a rubric (must-haves, equivalents, experience, education, projects, certifications) instead of matching raw keywords.</div>
+    </div>
+
+    <div class="card">
+      <h2>Resumes</h2>
+      <div id="dropZone" class="dropzone">
+        <div class="dz-icon">📄</div>
+        <p><strong>Drag &amp; drop</strong> resumes, folders or ZIP archives here</p>
+        <div class="dz-buttons">
+          <button class="btn btn-ghost" id="pickFiles">Select files</button>
+          <button class="btn btn-ghost" id="pickFolder">Select folder</button>
+          <button class="btn btn-ghost" id="pickZip">Select ZIP</button>
+        </div>
+        <p class="dz-note">PDF · DOC · DOCX · RTF · TXT · ZIP (nested folders supported)</p>
+      </div>
+      <input id="fileInput" type="file" multiple hidden
+             accept=".pdf,.doc,.docx,.docm,.rtf,.txt,.zip" />
+      <input id="folderInput" type="file" webkitdirectory directory multiple hidden />
+      <input id="zipInput" type="file" multiple accept=".zip" hidden />
+
+      <div class="filelist-head">
+        <strong id="fileCount">0 files queued</strong>
+        <button class="btn btn-link" id="clearFiles">Clear all</button>
+      </div>
+      <ul id="fileList" class="filelist"></ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head-row">
+      <h2>Evaluation Criteria &amp; Cut-offs</h2>
+      <button class="btn btn-link" id="resetCriteria">Reset to defaults</button>
+    </div>
+
+    <div class="threshold-row">
+      <label class="field field-inline">
+        <span>ATS shortlisting threshold</span>
+        <input id="threshold" type="range" min="0" max="100" step="1" value="60" />
+      </label>
+      <output id="thresholdOut" class="threshold-out">60%</output>
+      <p class="hint hint-inline">Candidates at or above this weighted score move to the next stage — nobody is rejected on keywords alone.</p>
+    </div>
+
+    <table class="criteria-table">
+      <thead>
+        <tr><th>Criterion</th><th>Weight (%)</th><th>Minimum score cut-off (%)</th><th>What the agent looks at</th></tr>
+      </thead>
+      <tbody id="criteriaBody"></tbody>
+      <tfoot>
+        <tr><td>Total</td><td id="weightTotal">100</td><td colspan="2"></td></tr>
+      </tfoot>
+    </table>
+
+    <div class="actions-row">
+      <button class="btn btn-primary btn-lg" id="startBtn">Analyse &amp; Shortlist</button>
+      <span id="startHint" class="hint"></span>
+    </div>
+
+    <div id="progressWrap" class="progress-wrap" hidden>
+      <div class="progress-head">
+        <strong id="progressStage">Starting…</strong>
+        <span id="progressCount">0 / 0</span>
+      </div>
+      <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+      <p class="hint" id="progressNote"></p>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================== RESULTS TAB -->
+<section id="tab-results" class="tab-panel">
+  <div id="noResults" class="empty">
+    <h2>No shortlist loaded</h2>
+    <p>Run a screening from the <strong>Screen</strong> tab, or open a record from <strong>History</strong>.</p>
+  </div>
+
+  <div id="resultsBody" hidden>
+    <div class="card">
+      <div class="card-head-row">
+        <div>
+          <h2 id="resJobTitle">Shortlist</h2>
+          <p class="sub" id="resMeta"></p>
+        </div>
+        <span id="lockBadge" class="pill pill-locked" hidden>Accepted &amp; locked</span>
+      </div>
+
+      <div class="stats" id="statsRow"></div>
+      <details class="rubric">
+        <summary>JD rubric extracted by the agent</summary>
+        <div id="rubricBody" class="rubric-body"></div>
+      </details>
+    </div>
+
+    <div class="card">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <div class="chipset" id="statusFilters"></div>
+          <input id="searchBox" type="search" placeholder="Search name, skills, email…" />
+        </div>
+        <div class="toolbar-right">
+          <button class="btn btn-ghost" id="addRowBtn">+ Add row</button>
+          <button class="btn btn-ghost" id="saveBtn">Save edits</button>
+          <button class="btn btn-ghost" id="downloadBtn">⬇ Excel</button>
+          <button class="btn btn-ghost" id="inviteBtn" title="Draft interview invitations for the shortlisted candidates">📨 Invite shortlisted</button>
+          <button class="btn btn-primary" id="acceptBtn">✓ Accept &amp; save to history</button>
+        </div>
+      </div>
+      <div id="dirtyNote" class="dirty-note" hidden>Unsaved edits — click <strong>Save edits</strong> to persist them.</div>
+
+      <div class="table-scroll">
+        <table class="grid" id="grid">
+          <thead>
+            <tr>
+              <th class="col-narrow">Candidate ID</th>
+              <th>Candidate Name</th>
+              <th>Phone Number</th>
+              <th>Email ID</th>
+              <th class="col-wide">Skills</th>
+              <th>Certification</th>
+              <th class="col-wide">Experience</th>
+              <th>Highest Education</th>
+              <th class="col-narrow">ATS %</th>
+              <th class="col-narrow">Status</th>
+              <th class="col-tiny"></th>
+            </tr>
+          </thead>
+          <tbody id="gridBody"></tbody>
+        </table>
+      </div>
+
+      <div class="pager">
+        <button class="btn btn-ghost" id="prevPage">← Prev</button>
+        <span id="pageInfo">–</span>
+        <button class="btn btn-ghost" id="nextPage">Next →</button>
+        <select id="pageSize">
+          <option value="25">25 / page</option>
+          <option value="50" selected>50 / page</option>
+          <option value="100">100 / page</option>
+          <option value="1000">1000 / page</option>
+        </select>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========================================================== OUTREACH TAB -->
+<section id="tab-outreach" class="tab-panel">
+  <div id="noOutreach" class="empty">
+    <h2>No shortlist loaded</h2>
+    <p>Open a completed screening from <strong>Review</strong> or <strong>History</strong> first.</p>
+  </div>
+
+  <div id="outreachBody" hidden>
+    <div class="sim-banner">
+      <span class="sim-dot"></span>
+      <div>
+        <strong>Simulation mode — no email is ever transmitted.</strong>
+        <span>There is no mail server wired into this app. “Send” records the invitation as
+        sent so you have a record of it. Nothing leaves this machine.</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head-row">
+        <div>
+          <h2 id="outJobTitle">Interview invitations</h2>
+          <p class="sub" id="outMeta"></p>
+        </div>
+        <div class="toolbar-right">
+          <button class="btn btn-ghost" id="redraftBtn" title="Rewrite every unsent draft from scratch">↻ Re-draft all</button>
+          <button class="btn btn-primary btn-lg" id="sendAllBtn">📨 Send the mails</button>
+        </div>
+      </div>
+      <div class="stats" id="outStats"></div>
+      <p class="hint">The agent has drafted one personalised invitation per shortlisted candidate.
+        Read them, edit anything you like, then hit <strong>Send the mails</strong> to send them all.
+        The draft deliberately promises no date, format or link — add those yourself, or once your
+        interviewer is built.</p>
+    </div>
+
+    <div id="sentBanner" class="sent-banner" hidden></div>
+
+    <div class="card">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <div class="chipset" id="outFilters"></div>
+        </div>
+        <div class="toolbar-right">
+          <span class="hint" id="outSelCount"></span>
+        </div>
+      </div>
+      <div id="draftList" class="draft-list"></div>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================== HISTORY TAB -->
+<section id="tab-history" class="tab-panel">
+  <div class="card">
+    <div class="card-head-row">
+      <h2>Accepted shortlists</h2>
+      <button class="btn btn-ghost" id="refreshHistory">Refresh</button>
+    </div>
+    <div id="historyList" class="history-list"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head-row">
+      <h2>Screening sessions</h2>
+      <button class="btn btn-ghost" id="refreshSessions">Refresh</button>
+    </div>
+    <div id="sessionList" class="history-list"></div>
+  </div>
+</section>
+</main>
+
+<!-- Detail drawer -->
+<aside id="drawer" class="drawer" hidden>
+  <div class="drawer-head">
+    <h3 id="drawerTitle">Candidate</h3>
+    <button class="btn btn-link" id="closeDrawer">✕</button>
+  </div>
+  <div id="drawerBody" class="drawer-body"></div>
+</aside>
+
+<!-- Accept modal -->
+<div id="modal" class="modal" hidden>
+  <div class="modal-card">
+    <h3>Accept shortlist</h3>
+    <p class="sub">This records the human-verified shortlist in history. The session becomes read-only.</p>
+    <label class="field"><span>Verified by</span><input id="acceptedBy" type="text" placeholder="Your name" /></label>
+    <label class="field"><span>Notes (optional)</span><textarea id="acceptNotes" rows="3"></textarea></label>
+    <label class="check"><input id="onlyShortlisted" type="checkbox" checked /> Save only Shortlisted + Review rows</label>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="cancelAccept">Cancel</button>
+      <button class="btn btn-primary" id="confirmAccept">Accept &amp; save</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="/static/app.js?v=3"></script>
+</body>
+</html>
