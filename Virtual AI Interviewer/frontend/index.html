@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Virtual AI Interviewer</title>
+<link rel="stylesheet" href="/static/styles.css?v=1" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">🎙️</span>
+    <div>
+      <h1>Virtual AI Interviewer</h1>
+      <p>Resume &amp; JD-driven questions &middot; live follow-ups &middot; performance-based scoring</p>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <span id="aiStatus" class="pill pill-muted">checking AI…</span>
+    <nav class="tabs">
+      <button class="tab active" data-tab="setup">1 · Set up</button>
+      <button class="tab" data-tab="stage">2 · Interview</button>
+      <button class="tab" data-tab="report">3 · Report</button>
+      <button class="tab" data-tab="history">4 · History</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<!-- ============================================================= SETUP TAB -->
+<section id="tab-setup" class="tab-panel active">
+
+  <div class="card">
+    <div class="card-head-row">
+      <div>
+        <h2>Who are you interviewing?</h2>
+        <p class="sub">Pull a shortlisted candidate straight from the screening app, or enter one by hand.</p>
+      </div>
+      <div class="chipset" id="sourceToggle">
+        <button class="chip active" data-source="screening">From a shortlist</button>
+        <button class="chip" data-source="manual">Enter manually</button>
+      </div>
+    </div>
+
+    <!-- shortlist picker -->
+    <div id="screeningPane">
+      <label class="field">
+        <span>Accepted shortlist</span>
+        <select id="shortlistSelect"><option value="">Loading…</option></select>
+      </label>
+      <div id="shortlistEmpty" class="inline-note" hidden></div>
+      <div class="table-scroll table-scroll-short">
+        <table class="grid" id="candidateGrid">
+          <thead>
+            <tr>
+              <th class="col-tiny"></th>
+              <th>Candidate</th>
+              <th>Current role</th>
+              <th class="col-wide">Experience</th>
+              <th class="col-narrow">Resume ATS</th>
+              <th class="col-narrow">Screening</th>
+            </tr>
+          </thead>
+          <tbody id="candidateBody"></tbody>
+        </table>
+      </div>
+      <p class="hint">The resume score is shown for context only. The interviewer is never told it, and
+        it forms no part of the interview score — that is the point of this stage.</p>
+    </div>
+
+    <!-- manual entry -->
+    <div id="manualPane" hidden>
+      <div class="grid-2">
+        <label class="field"><span>Candidate name *</span>
+          <input id="mName" type="text" placeholder="e.g. Priya Sundaram" /></label>
+        <label class="field"><span>Email</span>
+          <input id="mEmail" type="text" placeholder="optional" /></label>
+        <label class="field"><span>Current role</span>
+          <input id="mRole" type="text" placeholder="e.g. Backend Engineer at Acme" /></label>
+        <label class="field"><span>Total experience</span>
+          <input id="mExp" type="text" placeholder="e.g. 4 years" /></label>
+        <label class="field"><span>Highest education</span>
+          <input id="mEdu" type="text" placeholder="e.g. B.Tech, Computer Science" /></label>
+        <label class="field"><span>Certifications</span>
+          <input id="mCerts" type="text" placeholder="comma separated" /></label>
+      </div>
+      <label class="field"><span>Skills <em>(comma separated — questions are generated from these)</em></span>
+        <input id="mSkills" type="text" placeholder="Python, FastAPI, PostgreSQL, Docker…" /></label>
+      <label class="field"><span>Projects <em>(one per line, or comma separated)</em></span>
+        <textarea id="mProjects" rows="3" placeholder="Rate limiter library: distributed token bucket on Redis…"></textarea></label>
+      <label class="field"><span>Full resume text <em>(optional, but the best grounding for good questions)</em></span>
+        <textarea id="mResume" rows="7" placeholder="Paste the whole resume here…"></textarea></label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>The role</h2>
+    <div class="grid-2">
+      <label class="field"><span>Job title</span>
+        <input id="jobTitle" type="text" placeholder="e.g. Software Development Engineer" /></label>
+      <div class="field">
+        <span>Job description rubric</span>
+        <div id="rubricState" class="inline-note inline-note-quiet">No job description loaded yet.</div>
+      </div>
+    </div>
+    <label class="field"><span>Job description *</span>
+      <textarea id="jdText" rows="8" placeholder="Paste the complete JD — responsibilities, must-have skills, experience…"></textarea></label>
+    <p class="hint">Picking a shortlist fills this in from the screening run, including the rubric the
+      screening agent already extracted, so the interviewer does not have to re-read the JD.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-head-row">
+      <h2>Interview settings</h2>
+      <button class="btn btn-link" id="resetSettings">Reset to defaults</button>
+    </div>
+
+    <div class="settings-row">
+      <label class="field field-inline"><span>Planned questions</span>
+        <input id="plannedCount" type="range" min="4" max="20" step="1" value="10" /></label>
+      <output id="plannedOut" class="settings-out">10</output>
+
+      <label class="field field-inline"><span>Follow-ups per question</span>
+        <input id="maxFollowups" type="range" min="0" max="4" step="1" value="2" /></label>
+      <output id="followupsOut" class="settings-out">2</output>
+    </div>
+    <p class="hint">Follow-ups are generated live from what the candidate actually says, so the real
+      number of questions is higher than the planned count. The whole interview is capped at
+      <strong id="capNote">30</strong> turns.</p>
+
+    <h3 class="mini-head">Question categories</h3>
+    <div class="chipset chipset-wrap" id="categoryChips"></div>
+    <p class="hint">Introduction and closing are always included.</p>
+
+    <h3 class="mini-head">Voice</h3>
+    <div class="settings-row">
+      <label class="check"><input id="voiceOn" type="checkbox" checked /> Interviewer speaks out loud</label>
+      <label class="field field-inline"><span>Voice</span>
+        <select id="voiceSelect"><option value="">System default</option></select></label>
+      <label class="field field-inline"><span>Speaking rate</span>
+        <input id="voiceRate" type="range" min="0.7" max="1.3" step="0.02" value="0.98" /></label>
+      <output id="rateOut" class="settings-out">0.98×</output>
+    </div>
+    <div id="speechSupport" class="inline-note inline-note-quiet"></div>
+
+    <details class="rubric">
+      <summary>Evaluation weights — how the final score is composed</summary>
+      <table class="criteria-table">
+        <thead><tr><th>Parameter</th><th>Weight (%)</th><th>What it measures</th></tr></thead>
+        <tbody id="weightsBody"></tbody>
+        <tfoot><tr><td>Total</td><td id="weightTotal">100</td><td></td></tr></tfoot>
+      </table>
+    </details>
+
+    <div class="actions-row">
+      <button class="btn btn-primary btn-lg" id="startBtn">Prepare the interview</button>
+      <span id="startHint" class="hint"></span>
+    </div>
+
+    <div id="planProgress" class="progress-wrap" hidden>
+      <div class="progress-head">
+        <strong id="planStage">Starting…</strong>
+        <span id="planDetail"></span>
+      </div>
+      <div class="progress-bar"><div id="planFill" class="progress-fill progress-fill-indef"></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= STAGE TAB -->
+<section id="tab-stage" class="tab-panel">
+  <div id="noStage" class="empty">
+    <h2>No interview prepared</h2>
+    <p>Set a candidate up on the <strong>Set up</strong> tab, or reopen one from <strong>History</strong>.</p>
+  </div>
+
+  <div id="stageBody" hidden>
+    <div class="stage-grid">
+
+      <!-- ---------------------------------------------------- avatar column -->
+      <div class="card stage-card">
+        <div class="stage-head">
+          <div>
+            <h2 id="interviewerName">Interviewer</h2>
+            <p class="sub" id="interviewerRole"></p>
+          </div>
+          <span id="stageChip" class="pill pill-muted">Ready</span>
+        </div>
+
+        <div class="avatar-frame">
+          <div id="avatarStage" class="avatar-stage"></div>
+          <div id="avatarBadge" class="avatar-badge" hidden><span class="rec-dot"></span><span id="avatarBadgeText">Listening</span></div>
+        </div>
+
+        <div id="caption" class="caption" aria-live="polite"></div>
+
+        <div class="stage-tools">
+          <button class="btn btn-ghost" id="repeatBtn" title="Have the question asked again">↻ Repeat question</button>
+          <button class="btn btn-ghost" id="muteBtn" title="Silence the interviewer's voice">🔈 Mute voice</button>
+          <button class="btn btn-link" id="abandonBtn">End &amp; discard</button>
+        </div>
+      </div>
+
+      <!-- ------------------------------------------------ conversation column -->
+      <div class="stage-col">
+        <div class="card">
+          <div class="qhead">
+            <div class="qmeta">
+              <span class="pill pill-muted" id="qCategory">Not started</span>
+              <span class="pill pill-muted" id="qDifficulty" hidden></span>
+              <span class="pill pill-warn" id="qFollowup" hidden>follow-up</span>
+            </div>
+            <span class="qcount" id="qCount"></span>
+          </div>
+          <div class="progress-bar progress-bar-slim"><div id="qFill" class="progress-fill"></div></div>
+
+          <p class="question-text" id="questionText">The interview has not started yet.</p>
+          <p class="hint" id="questionHint"></p>
+
+          <div id="answerBox" class="answer-box" hidden>
+            <label class="field">
+              <span id="answerLabel">Your answer</span>
+              <textarea id="answerText" rows="7" placeholder="Speak, or type your answer here…"></textarea>
+            </label>
+            <div class="level-row">
+              <span class="level-label" id="levelLabel">mic</span>
+              <div class="level-bar"><div id="levelFill" class="level-fill"></div></div>
+              <span class="level-stats" id="answerStats">0 words</span>
+            </div>
+            <div class="answer-actions">
+              <button class="btn btn-primary" id="micBtn">🎤 Start answering</button>
+              <button class="btn btn-ghost" id="submitBtn" disabled>Submit answer →</button>
+              <button class="btn btn-ghost" id="skipBtn">Skip this question</button>
+            </div>
+          </div>
+
+          <div id="startGate" class="start-gate">
+            <p><strong>Ready when you are.</strong></p>
+            <p class="sub">The interviewer will greet you, then ask the first question. Answer out loud —
+              your microphone is only used to transcribe your answer in this browser.</p>
+            <button class="btn btn-primary btn-lg" id="beginBtn">Begin the interview</button>
+          </div>
+
+          <div id="finishGate" class="start-gate" hidden>
+            <p><strong>That is the end of the interview.</strong></p>
+            <p class="sub">The interviewer will now review the whole conversation and score it on
+              communication, technical and domain knowledge, project understanding, fit to the job
+              description, problem solving and answer quality.</p>
+            <button class="btn btn-primary btn-lg" id="evaluateBtn">Evaluate this interview</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head-row">
+            <h2>Conversation so far</h2>
+            <span class="sub" id="turnCount"></span>
+          </div>
+          <div id="turnLog" class="turn-log"><p class="sub">Nothing yet.</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ REPORT TAB -->
+<section id="tab-report" class="tab-panel">
+  <div id="noReport" class="empty">
+    <h2>No report yet</h2>
+    <p>Finish an interview, or open a completed one from <strong>History</strong>.</p>
+  </div>
+
+  <div id="reportBody" hidden>
+    <div class="card">
+      <div class="card-head-row">
+        <div>
+          <h2 id="repCandidate">Candidate</h2>
+          <p class="sub" id="repMeta"></p>
+        </div>
+        <div class="toolbar-right">
+          <button class="btn btn-ghost" id="regradeBtn" title="Re-run the closing review over this transcript">↻ Re-review</button>
+          <button class="btn btn-ghost" id="exportBtn">⬇ Excel</button>
+        </div>
+      </div>
+
+      <div class="score-hero">
+        <div class="score-dial" id="scoreDial">
+          <div class="score-value" id="repScore">—</div>
+          <div class="score-label">interview score</div>
+        </div>
+        <div class="score-side">
+          <div class="verdict-row">
+            <span class="pill pill-lg" id="repVerdict">—</span>
+            <span class="pill pill-muted" id="repConfidence"></span>
+          </div>
+          <p class="score-summary" id="repSummary"></p>
+          <div id="repConfWhy" class="inline-note inline-note-quiet" hidden></div>
+        </div>
+      </div>
+
+      <div id="repCompare" class="compare-strip"></div>
+    </div>
+
+    <div class="card">
+      <h2>Evaluation parameters</h2>
+      <p class="sub">Each score blends the grades given to individual answers with the closing review of
+        the whole transcript. A parameter the interview never tested is marked as such rather than scored.</p>
+      <div id="paramList" class="param-list"></div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card"><h2>Strengths shown</h2><div id="repStrengths" class="bullet-block"></div></div>
+      <div class="card"><h2>Gaps shown</h2><div id="repGaps" class="bullet-block"></div></div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card"><h2>Standout moments</h2><div id="repStandout" class="bullet-block"></div></div>
+      <div class="card">
+        <h2>Not covered by this interview</h2>
+        <div id="repNotCovered" class="bullet-block"></div>
+        <h2 class="mini-head">Risk flags</h2>
+        <div id="repRisks" class="bullet-block"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head-row">
+        <h2>Recommended next step</h2>
+        <span class="pill pill-muted">the AI recommends; a human decides</span>
+      </div>
+      <p id="repNextStep" class="next-step"></p>
+
+      <h3 class="mini-head">Your decision</h3>
+      <div class="grid-2">
+        <label class="field"><span>Reviewer</span><input id="revName" type="text" placeholder="Your name" /></label>
+        <label class="field"><span>Override the score <em>(optional)</em></span>
+          <input id="revOverride" type="number" min="0" max="100" step="0.5" placeholder="leave blank to keep the AI score" /></label>
+      </div>
+      <label class="field"><span>Notes</span><textarea id="revNotes" rows="3"></textarea></label>
+      <div class="actions-row">
+        <div class="chipset" id="decisionChips">
+          <button class="chip" data-decision="PROCEED">Proceed</button>
+          <button class="chip" data-decision="HOLD">Hold</button>
+          <button class="chip" data-decision="REJECT">Do not proceed</button>
+        </div>
+        <button class="btn btn-primary" id="saveReviewBtn">Save decision</button>
+        <span class="hint" id="reviewSaved"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head-row">
+        <h2>Transcript &amp; per-answer grades</h2>
+        <span class="sub" id="repCoverage"></span>
+      </div>
+      <div id="repTranscript" class="transcript"></div>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================== HISTORY TAB -->
+<section id="tab-history" class="tab-panel">
+  <div class="card">
+    <div class="card-head-row">
+      <h2>Interviews</h2>
+      <button class="btn btn-ghost" id="refreshHistory">Refresh</button>
+    </div>
+    <div id="historyList" class="history-list"></div>
+  </div>
+</section>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="/static/avatar.js?v=1"></script>
+<script src="/static/speech.js?v=1"></script>
+<script src="/static/app.js?v=1"></script>
+</body>
+</html>

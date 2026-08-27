@@ -2,7 +2,7 @@
 
 Bulk resume intake → AI agent analysis against a pasted JD → editable shortlist → human acceptance → **recruiter-approved interview invitations** → history + Excel export.
 
-> The virtual AI interviewer is being built as a separate project and will be merged in later. See [Where the interviewer plugs in](#where-the-interviewer-plugs-in).
+> The interview stage now exists as a sibling app: **[Virtual AI Interviewer](../Virtual%20AI%20Interviewer/README.md)**. It reads the shortlists accepted here and interviews the candidates on them. See [Where the interviewer plugs in](#where-the-interviewer-plugs-in).
 
 Stack: **HTML / CSS / JS** front end, **Python + FastAPI** back end, **JSON** file storage, **Azure OpenAI** via `.env`.
 
@@ -70,7 +70,11 @@ plus Highest Education, ATS %, per-criterion scores and status. Missing data is 
 
 ## Where the interviewer plugs in
 
-The screening and invitation stages are complete and tested. The interview stage is intentionally absent. When your personalised AI interviewer is ready, three seams connect it:
+The interviewer is a **separate app** that reads this one's output rather than a module inside it: it opens `data/history/*.json` read-only, lists the candidates whose status is `SHORTLISTED` or `REVIEW`, and generates its questions from the resume fields and the `jd_analysis` rubric stored in that record. Nothing here had to change for it to work, and nothing here depends on it.
+
+Run it from [../Virtual AI Interviewer](../Virtual%20AI%20Interviewer/README.md) on port 8010, alongside this app on 8000.
+
+Three optional seams remain if you would rather couple them more tightly:
 
 | Seam | File | What to do |
 |---|---|---|
@@ -78,7 +82,7 @@ The screening and invitation stages are complete and tested. The interview stage
 | Put it in the mail | `INVITE_SYSTEM` in [ai_agent.py](backend/ai_agent.py) | The prompt currently forbids promising a link or a format. Relax that once there is something real to promise. |
 | Show the results | new tab in [index.html](frontend/index.html) / [app.js](frontend/app.js) | The tab bar and the outreach controller are the pattern to copy. |
 
-Everything upstream — rubric, scoring, the human review gate, the draft/approve audit trail — is independent of how you interview.
+Everything upstream — rubric, scoring, the human review gate, the draft/approve audit trail — is independent of how you interview. The interviewer deliberately never sees the ATS score, so a candidate's resume grade cannot colour their interview.
 
 ---
 
