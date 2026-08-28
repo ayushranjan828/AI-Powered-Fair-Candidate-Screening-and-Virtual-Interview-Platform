@@ -54,29 +54,39 @@ async def _chat_json(
     headers = {"api-key": config.AZURE_OPENAI_API_KEY, "Content-Type": "application/json"}
 
     last_error = ""
-    for attempt in range(retries + 1):
+    attempt = 0
+    while attempt <= retries:
         try:
             resp = await client.post(_chat_url(), json=body, headers=headers)
         except httpx.HTTPError as exc:
             last_error = f"network error: {exc}"
-            await asyncio.sleep(1.5 * (attempt + 1))
+            attempt += 1
+            await asyncio.sleep(1.5 * attempt)
             continue
 
         if resp.status_code == 400:
             detail = resp.text
+            # Parameter-compat swaps re-send immediately and do not spend an
+            # attempt - each can fire only once, because the key is removed.
             # Older deployments want max_tokens; newer ones want max_completion_tokens.
-            if "max_completion_tokens" in detail and "max_tokens" in detail:
+            if ("max_completion_tokens" in body
+                    and "max_completion_tokens" in detail and "max_tokens" in detail):
                 body.pop("max_completion_tokens", None)
                 body["max_tokens"] = max_tokens
                 continue
-            if "response_format" in detail:
+            if "response_format" in body and "response_format" in detail:
                 body.pop("response_format", None)
                 continue
             raise AIError(f"Azure OpenAI rejected the request: {detail[:400]}")
 
         if resp.status_code in (429, 500, 502, 503, 504):
-            wait = float(resp.headers.get("retry-after", 2 * (attempt + 1)))
+            try:
+                wait = float(resp.headers.get("retry-after", ""))
+            except (TypeError, ValueError):
+                # Retry-After may also be an HTTP date; back off progressively.
+                wait = 2.0 * (attempt + 1)
             last_error = f"HTTP {resp.status_code}"
+            attempt += 1
             await asyncio.sleep(min(wait, 20))
             continue
 
@@ -92,6 +102,7 @@ async def _chat_json(
         if parsed is not None:
             return parsed
         last_error = "model did not return valid JSON"
+        attempt += 1
 
     raise AIError(last_error or "AI call failed")
 

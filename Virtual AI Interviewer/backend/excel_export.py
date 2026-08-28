@@ -65,6 +65,19 @@ def _join(values) -> str:
     return str(values or "")
 
 
+def _safe(value):
+    """Neutralise spreadsheet formula injection in candidate-controlled text.
+
+    openpyxl stores a string starting with "=" as a live formula, so an answer
+    like "=HYPERLINK(...)" would execute in the reviewer's Excel. "+", "@" and
+    tab are prefixed too, per the usual injection guidance; "-" is left alone
+    because _join's bullet lists start with it and it stays text in .xlsx.
+    """
+    if isinstance(value, str) and value.startswith(("=", "+", "@", "\t", "\r")):
+        return "'" + value
+    return value
+
+
 SUMMARY_COLUMNS = [
     ("candidate_name", "Candidate", 26),
     ("email_id", "Email", 30),
@@ -141,7 +154,7 @@ def build_summary_workbook(board: dict) -> bytes:
             "link_state": link_state,
             "interview_id": iv.get("interview_id", ""),
         }
-        ws.append([values.get(key, "") for key, _, _ in SUMMARY_COLUMNS])
+        ws.append([_safe(values.get(key, "")) for key, _, _ in SUMMARY_COLUMNS])
         line = ws.max_row
         for col in range(1, len(SUMMARY_COLUMNS) + 1):
             ws.cell(row=line, column=col).alignment = Alignment(vertical="top", wrap_text=True)
@@ -189,7 +202,7 @@ def build_summary_workbook(board: dict) -> bytes:
         ("Note", "Resume ATS is the screening-stage score. It forms no part of the "
                  "interview score and the interviewer is never told it."),
     ]:
-        meta.append([label, value])
+        meta.append([label, _safe(value)])
     for cell in meta["A"]:
         cell.font = Font(bold=True)
     for cell in meta["B"]:
@@ -258,7 +271,7 @@ def build_workbook(interview: dict) -> bytes:
         ("Job description", (interview.get("jd_text") or "")[:30000]),
     ]
     for label, value in rows:
-        ws.append([label, value])
+        ws.append([label, _safe(value)])
     for cell in ws["A"]:
         cell.font = Font(bold=True)
     for cell in ws["B"]:
@@ -290,7 +303,7 @@ def build_workbook(interview: dict) -> bytes:
     _style_header(ps, param_cols)
     for key, meaning in config.PARAMETERS.items():
         entry = parameters.get(key) or {}
-        ps.append([
+        ps.append([_safe(v) for v in (
             key.replace("_", " ").title(),
             weights.get(key, ""),
             entry.get("score") if entry.get("score") is not None else "not evidenced",
@@ -300,7 +313,7 @@ def build_workbook(interview: dict) -> bytes:
             entry.get("basis", ""),
             notes.get(key, ""),
             meaning,
-        ])
+        )])
         row = ps.max_row
         fill = _fill_for(entry.get("score"))
         for col in range(1, len(param_cols) + 1):
@@ -330,7 +343,7 @@ def build_workbook(interview: dict) -> bytes:
             "question_source": "Follow-up" if turn.get("question_source") == "followup"
                                else "Planned",
         }
-        ts.append([values.get(key, "") for key, _, _ in TRANSCRIPT_COLUMNS])
+        ts.append([_safe(values.get(key, "")) for key, _, _ in TRANSCRIPT_COLUMNS])
         row = ts.max_row
         for col in range(1, len(TRANSCRIPT_COLUMNS) + 1):
             ts.cell(row=row, column=col).alignment = Alignment(vertical="top", wrap_text=True)
