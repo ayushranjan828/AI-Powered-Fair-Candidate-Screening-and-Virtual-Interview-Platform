@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Your interview</title>
+<link rel="stylesheet" href="/static/styles.css?v=2" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>" />
+</head>
+<body class="candidate">
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">🎙️</span>
+    <div>
+      <h1 id="cRole">Your interview</h1>
+      <p id="cCompany"></p>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <span id="cChip" class="pill pill-muted">Loading…</span>
+  </div>
+</header>
+
+<main class="candidate-main">
+
+  <!-- ------------------------------------------------------------- loading -->
+  <section id="cLoading" class="card cand-card">
+    <div class="drafting">
+      <div class="spinner"></div>
+      <p><strong>Checking your invitation…</strong></p>
+    </div>
+  </section>
+
+  <!-- --------------------------------------------------------------- error -->
+  <section id="cError" class="card cand-card" hidden>
+    <h2 id="cErrorTitle">This link cannot be opened</h2>
+    <p class="sub" id="cErrorBody"></p>
+    <p class="hint">If you think this is a mistake, reply to the invitation email and
+      the team will help.</p>
+  </section>
+
+  <!-- ------------------------------------------------------------- welcome -->
+  <section id="cWelcome" class="card cand-card" hidden>
+    <div class="welcome-grid">
+      <div class="welcome-avatar">
+        <div id="cAvatarWelcome" class="avatar-stage"></div>
+      </div>
+      <div>
+        <h2 id="cGreeting">Hello</h2>
+        <p class="welcome-lead" id="cLead"></p>
+
+        <h3 class="mini-head">What to expect</h3>
+        <ul class="welcome-list">
+          <li>A conversation, not a form. You will be asked about your background,
+            your projects and a few scenarios, with follow-up questions based on
+            what you say.</li>
+          <li><strong>Speak your answers, or type them</strong> — whichever you
+            prefer. You can switch at any point.</li>
+          <li>There is no timer. Take as long as you need on each answer, and think
+            aloud if it helps.</li>
+          <li>You can have any question repeated, and you can skip a question.</li>
+          <li>If you close this page, opening your link again picks up where you
+            left off.</li>
+        </ul>
+
+        <div id="cResumeNote" class="inline-note inline-note-ok" hidden></div>
+        <div id="cDeviceNote" class="inline-note inline-note-quiet"></div>
+
+        <div class="actions-row">
+          <button class="btn btn-primary btn-lg" id="cBegin">Begin my interview</button>
+          <span class="hint" id="cBeginHint">Your microphone is used only to turn your
+            speech into text in this browser. No audio is recorded or uploaded.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------ preparing -->
+  <section id="cPreparing" class="card cand-card" hidden>
+    <div class="drafting">
+      <div class="spinner"></div>
+      <p><strong id="cPrepStage">Preparing your interview…</strong></p>
+      <p class="sub" id="cPrepDetail">Your questions are being written from your own
+        experience, so this takes a few seconds.</p>
+    </div>
+  </section>
+
+  <!-- ---------------------------------------------------------------- stage -->
+  <section id="cStage" hidden>
+    <div class="stage-grid">
+      <div class="card stage-card">
+        <div class="stage-head">
+          <div>
+            <h2 id="cInterviewerName">Interviewer</h2>
+            <p class="sub" id="cInterviewerRole"></p>
+          </div>
+          <span id="cStageChip" class="pill pill-muted">Ready</span>
+        </div>
+
+        <div class="avatar-frame">
+          <div id="cAvatar" class="avatar-stage"></div>
+          <div id="cBadge" class="avatar-badge" hidden>
+            <span class="rec-dot"></span><span id="cBadgeText">Listening</span>
+          </div>
+        </div>
+
+        <div id="cCaption" class="caption" aria-live="polite"></div>
+
+        <div class="stage-tools">
+          <button class="btn btn-ghost" id="cRepeat">↻ Repeat the question</button>
+          <button class="btn btn-ghost" id="cMute">🔈 Mute voice</button>
+        </div>
+      </div>
+
+      <div class="stage-col">
+        <div class="card">
+          <div class="qhead">
+            <div class="qmeta">
+              <span class="pill pill-muted" id="cQTopic">Getting started</span>
+              <span class="pill pill-warn" id="cQFollowup" hidden>follow-up</span>
+            </div>
+            <span class="qcount" id="cQCount"></span>
+          </div>
+          <div class="progress-bar progress-bar-slim"><div id="cQFill" class="progress-fill"></div></div>
+
+          <p class="question-text" id="cQuestion"></p>
+          <p class="hint" id="cQHint"></p>
+
+          <div id="cAnswerBox" class="answer-box" hidden>
+            <label class="field">
+              <span id="cAnswerLabel">Your answer</span>
+              <textarea id="cAnswer" rows="8" placeholder="Speak, or type your answer here…"></textarea>
+            </label>
+            <div class="level-row">
+              <span class="level-label">mic</span>
+              <div class="level-bar"><div id="cLevel" class="level-fill"></div></div>
+              <span class="level-stats" id="cStats">0 words</span>
+            </div>
+            <div class="answer-actions">
+              <button class="btn btn-primary" id="cMic">🎤 Start answering</button>
+              <button class="btn btn-ghost" id="cSubmit" disabled>Submit answer →</button>
+              <button class="btn btn-link" id="cSkip">Skip this question</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="cLogCard">
+          <div class="card-head-row">
+            <h2>Your answers so far</h2>
+            <span class="sub" id="cLogCount"></span>
+          </div>
+          <div id="cLog" class="turn-log"><p class="sub">Nothing yet.</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------- finished -->
+  <section id="cWrapping" class="card cand-card" hidden>
+    <div class="drafting">
+      <div class="spinner"></div>
+      <p><strong>Thank you — just wrapping up.</strong></p>
+      <p class="sub">Please keep this page open for a moment while your interview is saved.</p>
+    </div>
+  </section>
+
+  <section id="cDone" class="card cand-card" hidden>
+    <div class="done-block">
+      <div class="done-mark">✓</div>
+      <h2>Your interview is complete</h2>
+      <p class="welcome-lead" id="cDoneLead"></p>
+      <p class="hint">You can close this page now. There is nothing further for you to
+        do, and this link will no longer start a new interview.</p>
+    </div>
+  </section>
+
+</main>
+
+<div id="cToast" class="toast" hidden></div>
+
+<script src="/static/avatar.js?v=1"></script>
+<script src="/static/speech.js?v=1"></script>
+<script src="/static/candidate.js?v=1"></script>
+</body>
+</html>

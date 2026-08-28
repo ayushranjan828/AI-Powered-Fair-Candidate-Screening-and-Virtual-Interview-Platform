@@ -94,3 +94,18 @@ EMAIL_SEND_MODE = "simulate"
 
 # Statuses an outreach draft can hold.
 OUTREACH_STATUSES = ("DRAFT", "SENT")
+
+# --- interview links ---------------------------------------------------------
+# Each drafted invitation carries a signed link that starts that one candidate's
+# interview in the Virtual AI Interviewer app. See backend/interview_link.py for
+# the token, and INTERVIEW_BASE_URL / INTERVIEW_LINK_SECRET / INTERVIEW_LINK_TTL_DAYS
+# in .env.example. Set to "0" to go back to invitations with no link.
+INCLUDE_INTERVIEW_LINK = _env("INCLUDE_INTERVIEW_LINK", default="1") not in ("0", "false", "no")
+
+# Practicalities the candidate needs, stated by us rather than invented by the
+# model - see ai_agent.link_block().
+INTERVIEW_BROWSER_NOTE = _env(
+    "INTERVIEW_BROWSER_NOTE",
+    default="Use Chrome or Edge on a laptop or desktop, somewhere quiet, and allow "
+            "microphone access when the page asks.",
+)

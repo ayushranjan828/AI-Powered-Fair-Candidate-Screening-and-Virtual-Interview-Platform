@@ -4,7 +4,7 @@
 
   // Bump alongside the ?v= query in index.html. Logged so a stale cached copy
   // is obvious in the console instead of showing up as a dead button.
-  const UI_BUILD = "3 · screening + invite";
+  const UI_BUILD = "4 · screening + invite + interview links";
   console.info(`%cUI build ${UI_BUILD}`, "color:#2f5bd7;font-weight:700");
 
   const $ = (id) => document.getElementById(id);
@@ -102,6 +102,19 @@
     $("refreshHistory").addEventListener("click", loadHistory);
     $("refreshSessions").addEventListener("click", loadSessions);
     $("closeDrawer").addEventListener("click", () => { $("drawer").hidden = true; });
+
+    // ?session=SES-...&tab=outreach opens a session straight on a given tab, so a
+    // recruiter can bookmark or share "the invitations for this shortlist".
+    const params = new URLSearchParams(location.search);
+    const wanted = params.get("session");
+    if (wanted) {
+      try {
+        await openSession(wanted);
+        showTab(params.get("tab") || "results");
+      } catch (err) {
+        toast(`Could not open ${wanted}: ${err.message}`, "err");
+      }
+    }
 
     window.addEventListener("beforeunload", (e) => {
       if (state.dirty) { e.preventDefault(); e.returnValue = ""; }
@@ -671,10 +684,28 @@
 
       ${d.tone_note && !isSent ? `<p class="hint">Agent note: ${esc(d.tone_note)}</p>` : ""}
 
+      ${d.interview_link ? `
+        <div class="link-box">
+          <span class="link-label">Interview link</span>
+          <a href="${esc(d.interview_link)}" target="_blank" rel="noopener">${esc(d.interview_link)}</a>
+          <button class="btn btn-ghost" data-copy="${esc(d.interview_link)}">Copy</button>
+        </div>
+        <p class="hint">Opening this link starts their interview straight away — it is unique to
+          them. It is already in the body above; if you edit that text, keep the link.</p>`
+      : `<p class="hint warn-text">No interview link on this draft — check INCLUDE_INTERVIEW_LINK
+          and that the interviewer app is configured.</p>`}
+
       ${isSent ? `
         <div class="sent-box">
           <span>✓ Marked as sent ${when(d.sent_at)} — this is the exact text that would have gone out.</span>
-        </div>`
+        </div>
+        ${d.sent_interview_link || d.interview_link ? `
+          <div class="link-box">
+            <span class="link-label">Their interview link</span>
+            <a href="${esc(d.sent_interview_link || d.interview_link)}" target="_blank" rel="noopener">${
+              esc(d.sent_interview_link || d.interview_link)}</a>
+            <button class="btn btn-ghost" data-copy="${esc(d.sent_interview_link || d.interview_link)}">Copy</button>
+          </div>` : ""}`
       : `
         <div class="draft-actions">
           <button class="btn btn-ghost" data-save="${esc(d.candidate_id)}">Save edits</button>

@@ -58,11 +58,15 @@ plus Highest Education, ATS %, per-criterion scores and status. Missing data is 
 
 > **No email is ever sent.** There is no SMTP client, mail SDK or outbound mail call anywhere in this codebase. "Send the mails" marks each draft `SENT`, timestamps it, and freezes the exact text that would have gone out. The UI says so on a banner, in the confirmation and on every sent card. Wiring a real transport is a deliberate, separate change.
 
+Each invitation carries **that candidate's own interview link**. Opening it starts their interview in the Virtual AI Interviewer immediately — there is nothing to schedule. See [Interview links](#interview-links).
+
 - Drafting starts automatically when you open the tab — one call per candidate, six in parallel.
 - The prompt is forbidden from mentioning any score, rank or ATS percentage — a candidate never learns how they were graded.
-- It is also forbidden from inventing a date, time, format, interviewer or link, because none of those exist yet. The mail says the team will follow up with details.
+- It is also forbidden from inventing a date, deadline, duration, question count or the name of a human interviewer, and is required to say plainly that the interview is conducted by an AI.
+- **The model never writes the URL.** It marks the spot with a placeholder and the code substitutes the real address, so a hallucinated or mangled interview link can never reach a candidate.
+- The link is also shown on its own under each draft with a Copy button, so an edit to the body can never lose it.
 - A row with no email address is skipped and named in the banner, not silently dropped.
-- Sent invitations become read-only. Re-drafting never overwrites a sent mail.
+- Sent invitations become read-only, and the sent copy freezes both the text and the link.
 
 **4 · History** — every accepted shortlist and every screening session, re-openable, re-exportable, deletable.
 
@@ -74,15 +78,33 @@ The interviewer is a **separate app** that reads this one's output rather than a
 
 Run it from [../Virtual AI Interviewer](../Virtual%20AI%20Interviewer/README.md) on port 8010, alongside this app on 8000.
 
-Three optional seams remain if you would rather couple them more tightly:
-
-| Seam | File | What to do |
-|---|---|---|
-| Mint a handle per candidate | `send_outreach()` in [main.py](backend/main.py) | Where the `SENT` fields are written, attach whatever id, token or link your interviewer needs. |
-| Put it in the mail | `INVITE_SYSTEM` in [ai_agent.py](backend/ai_agent.py) | The prompt currently forbids promising a link or a format. Relax that once there is something real to promise. |
-| Show the results | new tab in [index.html](frontend/index.html) / [app.js](frontend/app.js) | The tab bar and the outreach controller are the pattern to copy. |
-
 Everything upstream — rubric, scoring, the human review gate, the draft/approve audit trail — is independent of how you interview. The interviewer deliberately never sees the ATS score, so a candidate's resume grade cannot colour their interview.
+
+### Interview links
+
+The two apps are joined by one thing: a signed link in the invitation email.
+
+```
+http://<interviewer-host>/i/<token>
+```
+
+The token is stateless and carries exactly three things — the shortlist id, the candidate id, and an expiry. It is HMAC-signed, because the link is all that stands between a stranger and starting an interview as a named candidate; an unsigned token would just be base64 of two ids that anybody could mint. It holds no personal data and grants one capability: take, or resume, that one interview.
+
+| Where | What happens |
+|---|---|
+| `_interview_link()` in [main.py](backend/main.py) | Mints the token at **draft** time, so the recruiter reviews the exact mail the candidate will get. Keyed on the accepted history id if the shortlist has been accepted, otherwise the session id — the interviewer resolves both. |
+| `INVITE_SYSTEM` in [ai_agent.py](backend/ai_agent.py) | Tells the model to leave a `[INTERVIEW_LINK]` placeholder and never to write a URL. |
+| `inject_link()` in [ai_agent.py](backend/ai_agent.py) | Substitutes the real link plus the practical instructions. If the model ignored the placeholder, the block is slotted in above the sign-off instead — a draft that silently loses its link would be far worse than one that reads slightly oddly. |
+| [interview_link.py](backend/interview_link.py) | The token itself. **This file is duplicated in both apps and the copies must stay identical**, the same arrangement as `dnsfix.py`. |
+
+Configuration lives in the shared repo-root `.env` (see [.env.example](.env.example)):
+
+- `INTERVIEW_BASE_URL` — where the interviewer is reachable **from the candidate's browser**. The default `http://127.0.0.1:8010` is fine for a demo on one machine; a real candidate obviously cannot open `127.0.0.1`.
+- `INTERVIEW_LINK_SECRET` — the signing key. If unset, both apps derive one from `AZURE_OPENAI_API_KEY` so links work with no setup, but rotating that Azure key would then invalidate every link already sent. Set an explicit secret before sending links to real people.
+- `INTERVIEW_LINK_TTL_DAYS` — default 14.
+- `INCLUDE_INTERVIEW_LINK=0` — go back to invitations that promise a follow-up instead.
+
+Sending is still simulated: no mail leaves the machine. The link in the draft is real and clickable, so you can copy it to a candidate yourself, or open it to see what they would see.
 
 ---
 
@@ -136,7 +158,7 @@ The AI grades the five criteria; the arithmetic and the decision live in [scorin
 
 | Method | Route |
 |---|---|
-| GET | `/api/sessions/{id}/outreach` — eligible candidates + current drafts |
+| GET | `/api/sessions/{id}/outreach` — eligible candidates, current drafts, link config |
 | POST | `/api/sessions/{id}/outreach/draft` — body: `candidate_ids?`, `regenerate?` |
 | PUT | `/api/sessions/{id}/outreach/{candidate_id}` — save the recruiter's edits |
 | POST | `/api/sessions/{id}/outreach/send` — **simulated**; marks SENT, freezes the text |

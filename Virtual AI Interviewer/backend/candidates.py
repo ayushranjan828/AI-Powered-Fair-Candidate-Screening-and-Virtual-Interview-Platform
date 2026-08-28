@@ -116,6 +116,120 @@ def pick_candidate(history_id: str, candidate_id: str) -> dict | None:
     return None
 
 
+# ------------------------------------------------------------- invite resolution
+def _session_files() -> list[Path]:
+    """Screening sessions, de-duplicated by file name. Same two-location story
+    as _history_files()."""
+    seen: set[str] = set()
+    found: list[Path] = []
+    for base in config.SCREENING_DATA_DIRS:
+        directory = base / "sessions"
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.glob("*.json")):
+            if path.name in seen:
+                continue
+            seen.add(path.name)
+            found.append(path)
+    return found
+
+
+def find_for_invite(key_id: str, candidate_id: str) -> dict | None:
+    """Resolve an interview link's ids to a candidate and their role.
+
+    An invitation can be sent before the recruiter accepts the shortlist into
+    history, so the link's key is whichever id existed at the time - a history id
+    or a session id. Both are searched, history first because an accepted record
+    is the reviewed one.
+
+    Returns the candidate row plus the JD context needed to plan an interview, or
+    None if the link does not point at anybody we can find.
+    """
+    for loader, key_field in ((_history_files, "history_id"), (_session_files, "session_id")):
+        for path in loader():
+            record = _read(path)
+            if not record:
+                continue
+            if record.get(key_field) != key_id and path.stem != key_id:
+                continue
+            for row in record.get("candidates", []):
+                if row.get("candidate_id") != candidate_id:
+                    continue
+                return {
+                    "candidate": dict(row),
+                    "job_title": record.get("job_title", NA),
+                    "jd_text": record.get("jd_text", ""),
+                    "jd_analysis": record.get("jd_analysis", {}) or {},
+                    "source_kind": key_field,
+                    "source_id": key_id,
+                }
+    return None
+
+
+# ------------------------------------------------------------ screening mail
+#
+# The screening app is what actually writes to a candidate: it drafts the
+# invitation with the model, personalises it, and freezes the exact text at the
+# moment of sending. This app therefore does not keep an invitation story of its
+# own for shortlisted people - it reads that record, read-only, and shows it.
+
+
+def _session_for(key_id: str) -> dict | None:
+    """The screening session behind a shortlist id, or behind a session id.
+
+    An accepted shortlist keeps only its `session_id`, and the outreach lives on
+    the session, so a history id has to be followed one hop. Both ids are
+    accepted for the same reason find_for_invite() accepts both: an invitation
+    can predate the shortlist being accepted.
+    """
+    session_id = key_id
+    for path in _history_files():
+        record = _read(path)
+        if record and (record.get("history_id") == key_id or path.stem == key_id):
+            session_id = record.get("session_id") or key_id
+            break
+
+    for path in _session_files():
+        record = _read(path)
+        if record and (record.get("session_id") == session_id or path.stem == session_id):
+            return record
+    return None
+
+
+def _normalise_outreach(draft: dict) -> dict:
+    """One invitation, in the shape the dashboard and the drawer both want.
+
+    `sent_*` are the frozen copies written at send time; falling back to the
+    live draft fields means a not-yet-sent invitation still previews correctly.
+    """
+    sent_at = draft.get("sent_at")
+    return {
+        "status": draft.get("status") or ("SENT" if sent_at else "DRAFT"),
+        "sent": bool(sent_at),
+        "sent_at": sent_at,
+        "send_mode": draft.get("send_mode") or "",
+        "subject": draft.get("sent_subject") or draft.get("subject") or "",
+        "body": draft.get("sent_body") or draft.get("body") or "",
+        "link": draft.get("sent_interview_link") or draft.get("interview_link") or "",
+        "email_id": draft.get("email_id") or NA,
+        "has_email": bool(draft.get("has_email")),
+        "edited": bool(draft.get("edited")),
+    }
+
+
+def outreach_for(key_id: str) -> dict:
+    """Every invitation the screening app holds for one shortlist, by candidate id."""
+    session = _session_for(key_id)
+    drafts = (session or {}).get("outreach") or {}
+    return {cid: _normalise_outreach(draft) for cid, draft in drafts.items()
+            if isinstance(draft, dict)}
+
+
+def sent_mail(key_id: str, candidate_id: str) -> dict | None:
+    """One candidate's invitation as the screening app recorded it."""
+    return outreach_for(key_id).get(candidate_id)
+
+
 # --------------------------------------------------------------- normalisation
 def _text(value) -> str:
     if value is None:

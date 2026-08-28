@@ -256,22 +256,30 @@ async def evaluate_resume(client: httpx.AsyncClient, resume_text: str, rubric: d
 INVITE_SYSTEM = """You are a recruitment coordinator drafting an interview invitation.
 
 The email tells a shortlisted candidate that they have moved to the interview
-stage, and that the team will follow up to arrange it.
+stage, and gives them a personal link that starts their interview when they open
+it. The interview is with an AI interviewer, is taken in the browser, and can be
+taken whenever suits them - there is nothing to schedule.
 
 Write in a warm, professional, plain-spoken register. Rules:
 - Address the candidate by name. Never mention their gender, age, nationality,
   address, college or previous employer's prestige.
 - Never state or imply a score, rank, ATS percentage or how they compared with
   other applicants. The candidate must not learn any internal scoring.
-- Be honest: this is an invitation to interview, NOT a job offer.
+- Be honest: this is an invitation to interview, NOT a job offer. Say plainly
+  that the interview is conducted by an AI interviewer - never imply a human
+  will be on the call, and never give the interviewer a human backstory.
 - Mention 1-2 genuine strengths drawn from the evidence given, so the email
   reads as personal rather than mass-produced.
-- Do NOT invent a date, time, duration, format, interviewer, location, salary,
-  benefit, or any link. None of those have been decided. Say that the team will
-  be in touch with the details.
-- Invite the candidate to reply with any access needs or scheduling constraints.
-- 130-190 words in the body. No markdown, no bullet characters, plain text
-  paragraphs separated by blank lines.
+- Put the exact placeholder [INTERVIEW_LINK] on a line of its own where the
+  link belongs, usually just before the sign-off. Write nothing else about the
+  URL: the real link and the practical instructions are inserted there
+  automatically. Never write out a URL yourself, and never invent one.
+- Do NOT invent a date, time, deadline, duration, question count, location,
+  salary, benefit, or the name of a human interviewer. None of those exist.
+- Tell them to reply if they need an adjustment in order to take part, or if
+  they cannot use the link.
+- 130-190 words in the body, not counting the placeholder line. No markdown, no
+  bullet characters, plain text paragraphs separated by blank lines.
 
 Respond with a single JSON object and nothing else."""
 
@@ -297,10 +305,90 @@ Return JSON with exactly these keys:
 
 - subject: under 80 characters, states the role and that it is an interview
   invitation. No emoji.
-- body: the full plain-text email including greeting and sign-off. No link,
-  no date, no time - the details are still to be arranged.
+- body: the full plain-text email including greeting and sign-off, with the
+  placeholder [INTERVIEW_LINK] on its own line. No real URL, no date, no
+  time, no deadline.
 - greeting_name: the name used in the greeting, or "Candidate" if the name is NA.
 - tone_note: one short sentence for the recruiter explaining what you emphasised."""
+
+
+# The model is told to leave a placeholder and never to write the URL itself.
+# Anything it might plausibly leave behind is accepted here, because a draft that
+# silently loses its link is worse than a slightly odd looking one.
+_LINK_PLACEHOLDER = re.compile(
+    r"^[ 	]*[\[{(<]{0,2}\s*INTERVIEW[_ -]?LINK\s*[\]})>]{0,2}[ 	]*:?[ 	]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+# Fallback insertion point: the sign-off paragraph.
+_SIGNOFF = re.compile(
+    r"^[ 	]*(best regards|kind regards|warm regards|regards|sincerely|"
+    r"best wishes|many thanks|thanks|thank you|yours sincerely|yours faithfully)"
+    r"[ 	]*,?[ 	]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def link_block(link: str) -> str:
+    """The link and its instructions, written by us and not by the model.
+
+    Every factual claim in here is true of the interviewer that is actually
+    built: the link opens one candidate's own interview, there is no schedule,
+    answers can be typed, and closing the tab mid-way resumes rather than
+    restarts. The model is not allowed to write this paragraph precisely because
+    it would invent a duration, a deadline or a question count.
+    """
+    return (
+        "Start your interview here:\n"
+        f"{link}\n\n"
+        "The link is unique to you, so please do not share it. Your interview is "
+        "with an AI interviewer that will ask about your background, your "
+        "projects and a few scenarios, and will follow up on your answers as a "
+        "conversation would. You can speak your answers or type them, whichever "
+        "you prefer.\n\n"
+        "There is nothing to schedule and no deadline in this email - open the "
+        f"link whenever suits you. {config.INTERVIEW_BROWSER_NOTE} If you close "
+        "the page part way through, opening the link again picks up where you "
+        "left off."
+    )
+
+
+def _tidy(text: str) -> str:
+    """One blank line between paragraphs, whatever the model produced.
+
+    Removing a placeholder line leaves a gap, and the model's own spacing is not
+    reliable, so paragraph spacing is normalised on the way out rather than left
+    to chance in something a candidate will read.
+    """
+    return re.sub(r"\n{3,}", "\n\n", (text or "")).strip()
+
+
+def inject_link(body: str, link: str) -> tuple[str, str]:
+    """Put the real link into a drafted body. Returns (body, how_it_landed).
+
+    `how_it_landed` is recorded on the draft so the recruiter can see whether the
+    model cooperated - useful when a draft reads oddly.
+    """
+    text = (body or "").rstrip()
+    if not link:
+        # No secret configured: strip the placeholder rather than mailing the
+        # literal word "[INTERVIEW_LINK]" to a candidate.
+        return _tidy(_LINK_PLACEHOLDER.sub("", text)), "none"
+
+    # Padded, then tidied, so the block always sits in its own paragraph however
+    # the surrounding whitespace arrived.
+    padded = f"\n\n{link_block(link)}\n\n"
+
+    if _LINK_PLACEHOLDER.search(text):
+        return _tidy(_LINK_PLACEHOLDER.sub(lambda _m: padded, text, count=1)), "placeholder"
+
+    # The model ignored the placeholder. Slot the block in above the sign-off so
+    # the mail still reads correctly.
+    match = _SIGNOFF.search(text)
+    if match:
+        head, tail = text[: match.start()].rstrip(), text[match.start():]
+        return _tidy(f"{head}{padded}{tail}"), "before-signoff"
+
+    return _tidy(f"{text}{padded}"), "appended"
 
 
 def display_name(raw) -> str:
@@ -320,9 +408,15 @@ def display_name(raw) -> str:
 
 
 async def draft_interview_email(
-    client: httpx.AsyncClient, candidate: dict, rubric: dict, ctx: dict
+    client: httpx.AsyncClient, candidate: dict, rubric: dict, ctx: dict,
+    link: str = "",
 ) -> dict:
-    """Draft one invitation for the recruiter to review, edit and approve."""
+    """Draft one invitation for the recruiter to review, edit and approve.
+
+    `link` is that candidate's interview link. The model only marks where it
+    goes; inject_link() puts the real URL in, so a mangled or hallucinated
+    address can never reach a candidate.
+    """
     strengths = candidate.get("matched_skills") or candidate.get("skills") or "NA"
     if isinstance(strengths, list):
         strengths = ", ".join(str(s) for s in strengths)
@@ -347,17 +441,24 @@ async def draft_interview_email(
     body = str(data.get("body") or "").strip()
     if not subject or not body:
         raise AIError("draft is missing a subject or body")
+
+    body, placement = inject_link(body, link)
     return {
         "subject": subject,
         "body": body,
         "greeting_name": str(data.get("greeting_name") or "Candidate").strip(),
         "tone_note": str(data.get("tone_note") or "").strip(),
+        "link_placement": placement,
     }
 
 
-def fallback_email(candidate: dict, rubric: dict, ctx: dict) -> dict:
+def fallback_email(candidate: dict, rubric: dict, ctx: dict, link: str = "") -> dict:
     """Deterministic template used when the AI draft fails, so the recruiter
-    always has something editable in front of them."""
+    always has something editable in front of them.
+
+    Carries the interview link too - a candidate should not be left waiting for a
+    call that is never coming just because one AI request failed.
+    """
     name = display_name(candidate.get("candidate_name"))
     role = rubric.get("role_title") or ctx.get("job_title") or "the role"
     company = ctx.get("company", config.COMPANY_NAME)
@@ -367,17 +468,29 @@ def fallback_email(candidate: dict, rubric: dict, ctx: dict) -> dict:
         f"Thank you for applying for the {role} position at {company}. We have "
         f"reviewed your application and would like to invite you to the interview "
         f"stage.\n\n"
-        f"A member of our team will be in touch shortly to arrange the details "
-        f"with you.\n\n"
+        "[INTERVIEW_LINK]\n\n"
         "If you have any questions, or need an adjustment in order to take part, "
         "just reply to this email and we will be glad to help.\n\n"
         f"Best regards,\n{recruiter}\n{company}"
     )
+    if not link:
+        # No link to give, so fall back to promising a follow-up instead of
+        # leaving a hole where the instructions should be.
+        body = body.replace(
+            "[INTERVIEW_LINK]",
+            "A member of our team will be in touch shortly to arrange the details "
+            "with you.",
+        )
+        placement = "none"
+    else:
+        body, placement = inject_link(body, link)
+
     return {
         "subject": f"Interview invitation - {role} at {company}",
         "body": body,
         "greeting_name": name,
         "tone_note": "Standard template - the AI draft was unavailable.",
+        "link_placement": placement,
     }
 
 

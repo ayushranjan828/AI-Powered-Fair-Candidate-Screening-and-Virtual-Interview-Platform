@@ -241,11 +241,22 @@ def build_report(interview: dict, holistic: dict, weights: dict | None = None) -
     # Which parameters carry the most and least support, for the reviewer's eye.
     unevidenced = [k for k, v in parameters.items() if v["score"] is None]
 
+    # Weights can be set per candidate, which makes two overall scores not
+    # directly comparable. That is a legitimate choice but it must never be
+    # invisible, so the report carries the comparison and the deltas.
+    default_weights = normalize_weights(None)
+    custom = {k: {"used": weight_map[k], "default": default_weights[k]}
+              for k in default_weights
+              if abs(weight_map[k] - default_weights[k]) > 0.01}
+
     return {
         "overall_score": overall,
         "verdict": verdict_for(overall) if overall is not None else "NOT_ASSESSED",
         "parameters": parameters,
         "parameter_weights": weight_map,
+        "default_weights": default_weights,
+        "weights_are_custom": bool(custom),
+        "weight_differences": custom,
         "parameter_notes": holistic.get("parameter_notes") or {},
         "unevidenced_parameters": unevidenced,
         "coverage": cov,

@@ -60,6 +60,14 @@ COMPANY_NAME = _env("COMPANY_NAME", default="Our Company")
 INTERVIEWER_NAME = _env("INTERVIEWER_NAME", default="Alex")
 INTERVIEWER_ROLE = _env("INTERVIEWER_ROLE", default="Technical Interviewer")
 
+# Practicalities put into an invitation the dashboard writes. Stated by us rather
+# than invented by a model - kept identical to the screening app's copy.
+INTERVIEW_BROWSER_NOTE = _env(
+    "INTERVIEW_BROWSER_NOTE",
+    default="Use Chrome or Edge on a laptop or desktop, somewhere quiet, and allow "
+            "microphone access when the page asks.",
+)
+
 # --- Interview shape ---------------------------------------------------------
 # Planned questions asked to every candidate. Follow-ups are generated on top of
 # these from the candidate's own answers, so the real turn count is higher.
