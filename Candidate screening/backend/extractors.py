@@ -11,6 +11,8 @@ import zipfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
+from . import config
+
 SUPPORTED_DOC_EXTS = {".pdf", ".docx", ".doc", ".txt", ".rtf", ".docm"}
 ARCHIVE_EXTS = {".zip"}
 
@@ -167,15 +169,27 @@ def extract_single(file_name: str, data: bytes) -> ExtractedResume:
     return ExtractedResume(file_name, text=text, meta={"chars": len(text)})
 
 
-def extract_zip(file_name: str, data: bytes, depth: int = 0) -> list[ExtractedResume]:
-    """Expand a ZIP (including nested folders and nested ZIPs)."""
+def extract_zip(file_name: str, data: bytes, depth: int = 0,
+                _budget: dict | None = None) -> list[ExtractedResume]:
+    """Expand a ZIP (including nested folders and nested ZIPs).
+
+    `_budget` is shared across nested archives so a ZIP bomb cannot dodge the
+    caps by splitting itself across layers. Members are read through zf.open()
+    with a hard byte ceiling - the declared file_size in the ZIP directory can
+    lie, so it is never trusted.
+    """
     out: list[ExtractedResume] = []
+    if _budget is None:
+        _budget = {"entries": 0, "bytes": 0}
     if depth > 3:
         return [ExtractedResume(file_name, error="ZIP nesting too deep")]
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
     except Exception as exc:  # noqa: BLE001
         return [ExtractedResume(file_name, error=f"Invalid ZIP: {exc}")]
+
+    member_cap = int(config.MAX_FILE_MB * 1048576)
+    total_cap = int(config.MAX_TOTAL_UPLOAD_MB * 1048576)
 
     with zf:
         for info in zf.infolist():
@@ -186,15 +200,38 @@ def extract_zip(file_name: str, data: bytes, depth: int = 0) -> list[ExtractedRe
             if base.startswith(".") or inner_name.startswith("__MACOSX/"):
                 continue
             ext = _ext(inner_name)
+            if ext not in ARCHIVE_EXTS and ext not in SUPPORTED_DOC_EXTS:
+                continue
             display = f"{file_name}/{inner_name}"
+
+            _budget["entries"] += 1
+            if _budget["entries"] > config.MAX_ZIP_ENTRIES:
+                out.append(ExtractedResume(
+                    file_name,
+                    error=f"ZIP expansion stopped after {config.MAX_ZIP_ENTRIES} entries",
+                ))
+                break
             try:
-                payload = zf.read(info)
+                with zf.open(info) as fh:
+                    payload = fh.read(member_cap + 1)
             except Exception as exc:  # noqa: BLE001
                 out.append(ExtractedResume(display, error=f"Unreadable entry: {exc}"))
                 continue
+            if len(payload) > member_cap:
+                out.append(ExtractedResume(
+                    display, error=f"Entry exceeds the {config.MAX_FILE_MB:g} MB per-file limit"))
+                continue
+            _budget["bytes"] += len(payload)
+            if _budget["bytes"] > total_cap:
+                out.append(ExtractedResume(
+                    file_name,
+                    error=f"ZIP expands beyond the {config.MAX_TOTAL_UPLOAD_MB:g} MB total limit",
+                ))
+                break
+
             if ext in ARCHIVE_EXTS:
-                out.extend(extract_zip(display, payload, depth + 1))
-            elif ext in SUPPORTED_DOC_EXTS:
+                out.extend(extract_zip(display, payload, depth + 1, _budget))
+            else:
                 out.append(extract_single(display, payload))
     if not out:
         out.append(ExtractedResume(file_name, error="ZIP contained no supported resume files"))
