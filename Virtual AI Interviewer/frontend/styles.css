@@ -78,6 +78,22 @@ input[type=range]{width:100%;accent-color:var(--brand)}
 .chip.active{background:var(--brand);border-color:var(--brand);color:#fff}
 .chip[disabled]{opacity:.55;cursor:not-allowed}
 
+/* Category picker. A checklist rather than toggle chips: with nine of them,
+   what is off has to be as readable as what is on. */
+.checklist{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));
+  gap:1px 12px;margin-top:6px}
+.check-item{display:flex;align-items:flex-start;gap:9px;padding:6px 8px;border-radius:8px;
+  cursor:pointer}
+.check-item:hover{background:var(--brand-soft)}
+.check-item input{margin:2px 0 0;width:15px;height:15px;flex:none;cursor:pointer;
+  accent-color:var(--brand)}
+.check-text{display:flex;flex-direction:column;min-width:0}
+.check-label{font-size:12.5px;font-weight:600}
+.check-about{font-size:11.5px;color:var(--muted);line-height:1.35}
+.check-note{font-weight:500;font-size:11px;color:var(--muted)}
+.check-item.locked,.check-item.locked input{cursor:default}
+.check-item.locked:hover{background:transparent}
+
 .inline-note{background:var(--warn-soft);color:#7a5206;border-radius:9px;padding:9px 12px;
   font-size:12.5px;margin-top:10px}
 .inline-note-quiet{background:var(--bg);color:var(--muted)}
@@ -325,9 +341,11 @@ body.candidate .topbar-right{margin-left:auto}
 .drawer-body{padding:16px 18px;overflow:auto;font-size:13px}
 .drawer-body h4{margin:16px 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
   color:var(--muted)}
-.mail-body{white-space:pre-wrap;background:var(--bg);border-radius:9px;padding:12px 14px;
+.mail-body{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border-radius:9px;padding:12px 14px;
   font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:12px;line-height:1.6;
   margin:4px 0 0;overflow-x:auto}
+/* a full token is ~110 characters; in a 520px drawer it has to wrap */
+.drawer-body .link-short{display:block;word-break:break-all;line-height:1.55}
 .drawer-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
 .drawer-actions .btn{text-decoration:none;display:inline-flex;align-items:center}
 
@@ -359,6 +377,10 @@ body.candidate .topbar-right{margin-left:auto}
 .hrow-main{flex:1 1 auto;min-width:0}
 .hrow.picked{background:var(--brand-soft);border-color:#cfdcff}
 .hrow .ha{flex:none}
+/* the row body opens the candidate's details */
+.hrow-open{cursor:pointer;border-radius:8px;margin:-4px;padding:4px}
+.hrow-open:hover{background:var(--brand-soft)}
+.hrow-open:hover .ht{text-decoration:underline;text-underline-offset:2px}
 
 /* -------------------------------------------- report overview filters (tab 3) */
 .filter-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:7px 0}
@@ -374,6 +396,8 @@ body.candidate .topbar-right{margin-left:auto}
 .row-badge .pill{font-size:10.5px;padding:2px 8px}
 #drawerBody .settings-row{gap:12px}
 #drawerBody .chipset-wrap{margin:2px 0 0}
+/* the drawer is 520px at most - one column reads better than two cramped ones */
+#drawerBody .checklist{grid-template-columns:1fr;gap:0}
 #drawerBody input[type=text]{margin-top:2px}
 
 /* compact weights table inside the settings drawer */

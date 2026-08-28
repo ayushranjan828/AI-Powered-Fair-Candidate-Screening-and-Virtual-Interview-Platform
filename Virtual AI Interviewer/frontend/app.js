@@ -255,21 +255,37 @@
     setTimeout(fill, 900);
   }
 
+  /** The category picker, as a checklist.
+   *
+   *  Three places offer exactly this choice - the dashboard defaults, one
+   *  candidate's own settings, and the off-shortlist card - so they share the
+   *  markup. `attr` is the data attribute the caller collects on; `chosen` is
+   *  the set already ticked, or null for "all of them".
+   *
+   *  Intro and closing are ticked and disabled: every interview opens and
+   *  closes, so they are shown rather than hidden, to say what will be asked.
+   */
+  function categoryChecklist(attr, chosen) {
+    return Object.entries(state.cfg.categories || {}).map(([key, meta]) => {
+      const forced = key === "intro" || key === "closing";
+      const on = forced || !chosen || chosen.has(key);
+      return `<label class="check-item${forced ? " locked" : ""}">
+        <input type="checkbox" ${attr}="${esc(key)}" ${on ? "checked" : ""}
+               ${forced ? "disabled" : ""} />
+        <span class="check-text">
+          <span class="check-label">${esc(meta.label)}${
+            forced ? ` <span class="check-note">always</span>` : ""}</span>
+          <span class="check-about">${esc(meta.about)}</span>
+        </span>
+      </label>`;
+    }).join("");
+  }
+
   function renderCategories() {
     const wrap = $("categoryChips");
-    const cats = state.cfg.categories || {};
-    wrap.innerHTML = Object.entries(cats).map(([key, meta]) => {
-      const forced = key === "intro" || key === "closing";
-      return `<button class="chip active" data-cat="${esc(key)}" title="${esc(meta.about)}"
-        ${forced ? "disabled" : ""}>${esc(meta.label)}${forced ? " ·" : ""}</button>`;
-    }).join("");
-    wrap.querySelectorAll("[data-cat]").forEach((chip) => {
-      if (chip.disabled) return;
-      chip.addEventListener("click", () => {
-        chip.classList.toggle("active");
-        settingsSummary();
-      });
-    });
+    wrap.innerHTML = categoryChecklist("data-cat", null);
+    wrap.querySelectorAll("[data-cat]").forEach((box) =>
+      box.addEventListener("change", settingsSummary));
   }
 
   function renderWeights() {
@@ -304,7 +320,7 @@
 
   function selectedCategories() {
     return [...document.querySelectorAll("[data-cat]")]
-      .filter((c) => c.classList.contains("active"))
+      .filter((c) => c.checked)
       .map((c) => c.dataset.cat);
   }
 
@@ -808,7 +824,7 @@ ${mail.body}`, "Invitation copied"));
       planned_count: Number($("oCount").value),
       max_followups: Number($("oFollow").value),
       categories: [...document.querySelectorAll("[data-ocat]")]
-        .filter((c) => c.classList.contains("active"))
+        .filter((c) => c.checked)
         .map((c) => c.dataset.ocat),
       voice: $("oVoiceOn").checked,
       voice_name: $("oVoiceName").value,
@@ -858,15 +874,7 @@ ${mail.body}`, "Invitation copied"));
   function renderManualCategories() {
     const wrap = $("oCats");
     if (!wrap) return;
-    wrap.innerHTML = Object.entries(state.cfg.categories || {}).map(([key, meta]) => {
-      const forced = key === "intro" || key === "closing";
-      return `<button class="chip active" data-ocat="${esc(key)}" title="${esc(meta.about)}"
-        ${forced ? "disabled" : ""}>${esc(meta.label)}${forced ? " ·" : ""}</button>`;
-    }).join("");
-    wrap.querySelectorAll("[data-ocat]").forEach((chip) => {
-      if (chip.disabled) return;
-      chip.addEventListener("click", () => chip.classList.toggle("active"));
-    });
+    wrap.innerHTML = categoryChecklist("data-ocat", null);
   }
 
   /** The manual fold: a candidate who never went through screening. */
@@ -1453,7 +1461,6 @@ ${mail.body}`, "Invitation copied"));
     }
 
     const o = info.options;
-    const cats = state.cfg.categories || {};
     const chosen = new Set(o.categories || []);
 
     $("drawerTitle").textContent = `Interview settings · ${properName(row.candidate_name)}`;
@@ -1484,15 +1491,7 @@ ${mail.body}`, "Invitation copied"));
       </div>
 
       <h4>Categories to probe</h4>
-      <div class="chipset chipset-wrap" id="csCats">
-        ${Object.entries(cats).map(([key, meta]) => {
-          const forced = key === "intro" || key === "closing";
-          const on = forced || chosen.has(key);
-          return `<button class="chip ${on ? "active" : ""}" data-cscat="${esc(key)}"
-                    title="${esc(meta.about)}" ${forced ? "disabled" : ""}
-                    >${esc(meta.label)}${forced ? " ·" : ""}</button>`;
-        }).join("")}
-      </div>
+      <div class="checklist" id="csCats">${categoryChecklist("data-cscat", chosen)}</div>
       <p class="hint">Introduction and closing are always asked. Narrowing the mix means
         fewer evaluation parameters get evidence — those are reported as
         <em>not tested</em> rather than scored low.</p>
@@ -1560,11 +1559,6 @@ ${mail.body}`, "Invitation copied"));
       i.addEventListener("input", sumDrawerWeights));
     sumDrawerWeights();
 
-    $("csCats").querySelectorAll("[data-cscat]").forEach((chip) => {
-      if (chip.disabled) return;
-      chip.addEventListener("click", () => chip.classList.toggle("active"));
-    });
-
     $("csCancel").addEventListener("click", () => { $("drawer").hidden = true; });
     $("csSave").addEventListener("click", () => saveCandidateSettings(cid));
     $("csReset")?.addEventListener("click", () => resetCandidateSettings(cid));
@@ -1612,7 +1606,7 @@ ${mail.body}`, "Invitation copied"));
       planned_count: Number($("csCount").value),
       max_followups: Number($("csFollow").value),
       categories: [...$("csCats").querySelectorAll("[data-cscat]")]
-        .filter((c) => c.classList.contains("active"))
+        .filter((c) => c.checked)
         .map((c) => c.dataset.cscat),
       voice: $("csVoice").checked,
       voice_name: $("csVoiceName").value,
@@ -2240,7 +2234,8 @@ ${mail.body}`, "Invitation copied"));
       <label class="hrow-pick">
         <input type="checkbox" data-hpick="${esc(r.interview_id)}" ${picked ? "checked" : ""} />
       </label>
-      <div class="hrow-main">
+      <div class="hrow-main hrow-open" data-hopen="${esc(r.interview_id)}"
+           title="Open this candidate's details">
         <div class="ht">${esc(properName(r.candidate_name))}
           <span class="sub">· ${esc(r.job_title)}</span>
           ${badge}
@@ -2257,6 +2252,89 @@ ${mail.body}`, "Invitation copied"));
         <button class="btn btn-ghost" data-del="${esc(r.interview_id)}">Delete</button>
       </div>
     </div>`;
+  }
+
+  /** One candidate's full picture: who they are, what was sent, and their link.
+   *
+   *  History is the only list that spans both kinds of candidate, so this is
+   *  where the three sources get shown together - the interview record for the
+   *  person, the screening app for the mail, and whichever of the two minted
+   *  the link.
+   */
+  async function openInterviewDetails(interviewId) {
+    let d;
+    try {
+      d = await api(`/api/interviews/${encodeURIComponent(interviewId)}/details`);
+    } catch (err) {
+      return toast(`Could not open those details: ${err.message}`, "err");
+    }
+
+    const c = d.candidate || {};
+    const mail = d.mail;
+    const link = d.link || {};
+    // Screening rows carry "NA" for anything the extractor did not find; there
+    // is no point giving a heading to a field that says nothing.
+    const has = (v) => v && String(v).trim() && String(v).trim() !== "NA";
+    const field = (label, value) => has(value)
+      ? `<h4>${esc(label)}</h4><p>${esc(String(value))}</p>` : "";
+
+    $("drawerTitle").textContent = properName(c.candidate_name) || interviewId;
+    $("drawerBody").innerHTML = `
+      <div class="inline-note">${esc(d.job_title)} · ${esc(titleise(d.status))}
+        · prepared ${esc(when(d.created_at))} · from ${esc(d.source)}<br />
+        ${esc(interviewId)} · ${d.answered} of ~${d.planned_total || "?"} answered${
+          d.overall_score != null
+            ? ` · scored ${pct(d.overall_score)} (${esc(titleise(d.verdict || ""))})` : ""}</div>
+
+      ${field("Email", c.email_id)}
+      ${field("Phone", c.phone_number)}
+      ${field("Current role", c.current_role)}
+      ${field("Experience", c.experience)}
+      ${field("Location", c.location)}
+      ${field("Highest education", c.highest_education)}
+      ${field("Education", c.education_details)}
+      ${field("Certifications", c.certification)}
+      ${field("Skills", c.skills)}
+      ${field("Projects", c.projects)}
+
+      <h4>Invitation</h4>
+      ${mail
+        ? `<p class="sub">${mail.sent
+             ? `Sent ${esc(when(mail.sent_at))} · ${
+                  mail.source === "screening" ? "by the screening app" : "recorded here"}`
+             : mail.source === "screening"
+               ? "Drafted by the screening app, not sent yet"
+               : "Not marked as sent yet"}</p>
+           <p><strong>${esc(mail.subject)}</strong></p>
+           <pre class="mail-body">${esc(mail.body)}</pre>`
+        : `<p class="sub">No invitation on record. This candidate has not been
+             invited by the screening app, and no link was issued here.</p>`}
+
+      <h4>Interview link</h4>
+      ${link.url
+        ? `<div class="link-cell">
+             <code class="link-short" title="${esc(link.url)}">${esc(link.url)}</code>
+           </div>
+           <p class="sub">${link.revoked
+             ? "This link has been deactivated — opening it is refused."
+             : link.origin === "screening"
+               ? "Minted and sent by the screening app."
+               : "Issued here, for a candidate who was never on a shortlist."}</p>`
+        : `<p class="sub">No link — this interview can only be conducted here.</p>`}
+
+      <div class="drawer-actions">
+        ${link.url
+          ? `<button class="btn btn-ghost" id="dtCopy">Copy link</button>` : ""}
+        ${d.overall_score != null
+          ? `<button class="btn btn-primary" id="dtReport">Open report</button>` : ""}
+      </div>`;
+    $("drawer").hidden = false;
+
+    $("dtCopy")?.addEventListener("click", () => copyText(link.url, "Link copied"));
+    $("dtReport")?.addEventListener("click", () => {
+      $("drawer").hidden = true;
+      openReport(interviewId);
+    });
   }
 
   function wireHistoryRows() {
@@ -2278,6 +2356,8 @@ ${mail.body}`, "Invitation copied"));
       }));
     list.querySelectorAll("[data-del]").forEach((b) =>
       b.addEventListener("click", () => deleteInterviews([b.dataset.del])));
+    list.querySelectorAll("[data-hopen]").forEach((el) =>
+      el.addEventListener("click", () => openInterviewDetails(el.dataset.hopen)));
 
   }
 

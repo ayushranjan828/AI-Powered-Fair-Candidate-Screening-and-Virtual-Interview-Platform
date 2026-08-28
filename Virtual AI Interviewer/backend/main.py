@@ -821,6 +821,40 @@ def _invite_or_stub(shortlist_id: str, candidate_id: str) -> dict:
     }
 
 
+def _local_invitation(invite: dict) -> dict:
+    """The plain invitation for a one-off candidate, and a mailto: for sending it.
+
+    Deterministic, not model-written: the personalised version is the screening
+    app's, and a one-off candidate has no screening record to personalise from.
+    """
+    name = candidates.display_name(invite.get("candidate_name"))
+    role = invite.get("job_title") or "the role"
+    subject = f"Interview invitation - {role} at {config.COMPANY_NAME}"
+    body = (
+        f"Hi {name},\n\n"
+        f"Thank you for your interest in the {role} position at "
+        f"{config.COMPANY_NAME}. We would like to invite you to the interview "
+        f"stage.\n\n"
+        f"Your interview is with an AI interviewer and is taken in your browser. "
+        f"There is nothing to schedule - open the link below whenever suits you.\n\n"
+        f"Start your interview here:\n{invite['link']}\n\n"
+        f"The link is unique to you, so please do not share it. You will be asked "
+        f"about your background, your projects and a few scenarios, and can speak "
+        f"your answers or type them. {config.INTERVIEW_BROWSER_NOTE} If you close "
+        f"the page part way through, opening the link again picks up where you "
+        f"left off.\n\n"
+        f"If you need an adjustment in order to take part, or cannot use the link, "
+        f"just reply to this email.\n\n"
+        f"Best regards,\n{config.COMPANY_NAME}"
+    )
+    email = invite.get("email_id") or ""
+    to = email if "@" in email else ""
+    mailto = f"mailto:{quote(to)}?subject={quote(subject)}&body={quote(body)}"
+    return {"source": "local", "subject": subject, "body": body, "mailto": mailto,
+            "to": to, "has_email": bool(to), "link": invite.get("link", ""),
+            "sent": bool(invite.get("sent_at")), "sent_at": invite.get("sent_at")}
+
+
 @app.get("/api/invites/{shortlist_id}/{candidate_id}/mail")
 async def invite_mail(shortlist_id: str, candidate_id: str):
     """The invitation for one candidate. Two sources, and the difference matters.
@@ -854,33 +888,7 @@ async def invite_mail(shortlist_id: str, candidate_id: str):
             "mailto": "",
         }
 
-    invite = _require_invite(shortlist_id, candidate_id)
-    name = candidates.display_name(invite.get("candidate_name"))
-    role = invite.get("job_title") or "the role"
-    subject = f"Interview invitation - {role} at {config.COMPANY_NAME}"
-    body = (
-        f"Hi {name},\n\n"
-        f"Thank you for your interest in the {role} position at "
-        f"{config.COMPANY_NAME}. We would like to invite you to the interview "
-        f"stage.\n\n"
-        f"Your interview is with an AI interviewer and is taken in your browser. "
-        f"There is nothing to schedule - open the link below whenever suits you.\n\n"
-        f"Start your interview here:\n{invite['link']}\n\n"
-        f"The link is unique to you, so please do not share it. You will be asked "
-        f"about your background, your projects and a few scenarios, and can speak "
-        f"your answers or type them. {config.INTERVIEW_BROWSER_NOTE} If you close "
-        f"the page part way through, opening the link again picks up where you "
-        f"left off.\n\n"
-        f"If you need an adjustment in order to take part, or cannot use the link, "
-        f"just reply to this email.\n\n"
-        f"Best regards,\n{config.COMPANY_NAME}"
-    )
-    email = invite.get("email_id") or ""
-    to = email if "@" in email else ""
-    mailto = (f"mailto:{quote(to)}?subject={quote(subject)}&body={quote(body)}")
-    return {"source": "local", "subject": subject, "body": body, "mailto": mailto,
-            "to": to, "has_email": bool(to), "link": invite["link"],
-            "sent": bool(invite.get("sent_at")), "sent_at": invite.get("sent_at")}
+    return _local_invitation(_require_invite(shortlist_id, candidate_id))
 
 
 @app.post("/api/invites/{shortlist_id}/{candidate_id}/sent")
@@ -999,6 +1007,69 @@ async def get_interview(interview_id: str, full: bool = False):
     """
     record = _require(interview_id)
     return record if full else engine.public_view(record)
+
+
+@app.get("/api/interviews/{interview_id}/details")
+async def interview_details(interview_id: str):
+    """Everything the History tab's detail panel shows for one interview.
+
+    Three things a recruiter wants side by side and would otherwise chase across
+    two apps: who the candidate is, the invitation they were sent, and the link
+    that invitation carried. Assembled here because the sources differ by where
+    the candidate came from - a shortlisted one is described by the screening
+    app, a one-off only by the interview record itself.
+
+    Reviewer-facing, so unlike engine.public_view() it may carry the candidate's
+    own details. It still carries no plan and no expected answers.
+    """
+    record = _require(interview_id)
+    source = record.get("source") or {}
+    shortlist_id = source.get("shortlist_id") or source.get("history_id") or ""
+    candidate_id = source.get("candidate_id") or ""
+
+    mail = None
+    invite = storage.get_invite(ONE_OFF_KEY, interview_id)
+    if invite:
+        # Prepared here, off any shortlist: this app minted the link and holds
+        # the only invitation there is.
+        mail = _local_invitation(invite)
+    elif shortlist_id and candidate_id:
+        sent = candidates.sent_mail(shortlist_id, candidate_id)
+        invite = storage.get_invite(shortlist_id, candidate_id)
+        if sent:
+            address = str(sent["email_id"] or "")
+            mail = {"source": "screening", "subject": sent["subject"],
+                    "body": sent["body"], "link": sent["link"],
+                    "to": address if "@" in address else "",
+                    "has_email": sent["has_email"], "sent": sent["sent"],
+                    "sent_at": sent["sent_at"], "mailto": ""}
+
+    turns = [t for t in record.get("turns", []) if t.get("answer")]
+    report = record.get("report") or {}
+    return {
+        "interview_id": interview_id,
+        "status": record.get("status"),
+        "job_title": record.get("job_title", "NA"),
+        "created_at": record.get("created_at"),
+        "completed_at": record.get("completed_at"),
+        "source": source.get("kind", "manual"),
+        "shortlist_id": shortlist_id,
+        "candidate_id": candidate_id,
+        "candidate": record.get("candidate", {}),
+        "answered": len(turns),
+        "planned_total": len((record.get("plan") or {}).get("questions", [])),
+        "overall_score": report.get("overall_score"),
+        "verdict": report.get("verdict"),
+        "mail": mail,
+        "link": {
+            # Whatever link exists for this person, whoever minted it. A
+            # withdrawn one is still shown - knowing it is dead is the point.
+            "url": (mail or {}).get("link", ""),
+            "origin": "interviewer" if (mail or {}).get("source") == "local"
+                      else "screening",
+            "revoked": bool((invite or {}).get("revoked")),
+        },
+    }
 
 
 @app.get("/api/interviews/{interview_id}/status")

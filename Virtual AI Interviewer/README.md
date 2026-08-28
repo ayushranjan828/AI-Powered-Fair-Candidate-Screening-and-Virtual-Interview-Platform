@@ -50,7 +50,12 @@ Open <http://127.0.0.1:8010>. Click the **AI** pill in the header for a live con
 
 **3 · Report** — opens on **Candidate reports**: every candidate on a shortlist, split by whether they actually sat the interview, filterable by attendance and by decision, and exportable as one Excel report. Open a row for the full individual write-up — overall score, verdict, per-parameter breakdown with the reasoning behind each number, strengths, gaps, standout moments, what the interview failed to cover, risk flags, a recommended next step, and the transcript with the grade given to every single answer. A human records the actual decision at the bottom. See [Candidate reports](#candidate-reports).
 
-**4 · History** — every interview ever run. Filter by status, search, and tick rows for a bulk action: **Select all shown** then **Delete selected** clears a batch, or **Excel for selected** downloads a workbook per completed interview. The confirmation names who is going and says how many had a completed report, because this takes the transcripts with it.
+**4 · History** — every interview ever run. **Click a row** to open that candidate in a drawer: their
+details from the resume, the invitation they were sent — the screening app's own text where it sent
+one, the local invitation for a one-off — and the interview link that invitation carried, with
+*Copy link*. It is the one list spanning both kinds of candidate, so it is where the three sources
+are shown together (`GET /api/interviews/{id}/details`). Filter by status, search, and tick rows for
+a bulk action: **Select all shown** then **Delete selected** clears a batch, or **Excel for selected** downloads a workbook per completed interview. The confirmation names who is going and says how many had a completed report, because this takes the transcripts with it.
 
 A shortlist's dashboard can be bookmarked at `/?shortlist=HIS-XXXXXXXX`, and any interview reopened at `/?interview=INT-XXXXXXXX`.
 
@@ -495,7 +500,7 @@ Checked against the live Azure deployment and in a real browser:
   record leaked onto the dashboard. The result panel itself was rendered in a browser
   with all five actions present;
 - the off-shortlist card owning its own controls, in a browser: 7 weight rows
-  totalling 100 and updating live, 9 category chips, its own voice picker and rate,
+  totalling 100 and updating live, a 9-row category checklist, its own voice picker and rate,
   its own Reset — and proven independent (moving the dashboard's question slider to 4
   left the card on 10). A bespoke shape typed into the card (5 questions / 1 follow-up
   / 3 categories / a chosen voice at 1.16x / weights 5-55-10-10-5-10-5) came back on
