@@ -528,6 +528,18 @@
   <div id="drawerBody" class="drawer-body"></div>
 </aside>
 
+<!-- Centred confirmation, in place of the browser's own top-of-window confirm() -->
+<div id="modal" class="modal-backdrop" hidden>
+  <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="modalTitle">
+    <h3 id="modalTitle"></h3>
+    <div id="modalBody" class="modal-body"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="modalCancel">Cancel</button>
+      <button class="btn btn-primary" id="modalOk">OK</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast" hidden></div>
 
 <script src="/static/avatar.js?v=1"></script>

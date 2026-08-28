@@ -88,6 +88,70 @@
   };
   const words = (text) => (String(text || "").trim().match(/[\w'-]+/g) || []).length;
 
+  /** A yes/no question, in the middle of the page. Resolves true or false.
+   *
+   *  Same contract as the browser's confirm(), which paints at the top of the
+   *  window - far from the button that raised it - and can only render plain
+   *  text. Here the name of what is about to be deleted can be given its own
+   *  weight, and a destructive action can look destructive.
+   *
+   *  `copy` swaps the question for a selectable box: the fallback when the
+   *  clipboard is unavailable, where window.prompt() used to truncate a link.
+   */
+  function askConfirm({ title, body = "", detail = "", ok = "OK",
+                        cancel = "Cancel", danger = false, copy = "" }) {
+    return new Promise((resolve) => {
+      const wrap = $("modal");
+      const okBtn = $("modalOk");
+      const cancelBtn = $("modalCancel");
+
+      $("modalTitle").textContent = title;
+      $("modalBody").innerHTML = [
+        detail ? `<p class="modal-detail">${esc(detail)}</p>` : "",
+        body ? `<p>${esc(body)}</p>` : "",
+        copy ? `<textarea class="modal-copy" id="modalCopy" readonly
+                  >${esc(copy)}</textarea>` : "",
+      ].join("");
+
+      okBtn.textContent = ok;
+      okBtn.classList.toggle("btn-danger", danger);
+      okBtn.classList.toggle("btn-primary", !danger);
+      cancelBtn.textContent = cancel;
+      cancelBtn.hidden = !cancel;
+      wrap.hidden = false;
+
+      // A copy box wants the text selected and ready; anything else wants the
+      // action under the finger, so Enter answers it.
+      if (copy) {
+        const field = $("modalCopy");
+        field.focus();
+        field.select();
+      } else {
+        okBtn.focus();
+      }
+
+      const done = (answer) => {
+        wrap.hidden = true;
+        okBtn.removeEventListener("click", onOk);
+        cancelBtn.removeEventListener("click", onCancel);
+        wrap.removeEventListener("mousedown", onBackdrop);
+        document.removeEventListener("keydown", onKey);
+        resolve(answer);
+      };
+      const onOk = () => done(true);
+      const onCancel = () => done(false);
+      // Only the backdrop itself, so a drag that ends outside the card does not
+      // dismiss what the user was reading.
+      const onBackdrop = (e) => { if (e.target === wrap) done(false); };
+      const onKey = (e) => { if (e.key === "Escape") done(false); };
+
+      okBtn.addEventListener("click", onOk);
+      cancelBtn.addEventListener("click", onCancel);
+      wrap.addEventListener("mousedown", onBackdrop);
+      document.addEventListener("keydown", onKey);
+    });
+  }
+
   let toastTimer;
   function toast(msg, kind = "") {
     const el = $("toast");
@@ -678,8 +742,11 @@
       await navigator.clipboard.writeText(text);
       toast(okMsg || "Copied", "ok");
     } catch {
-      // Clipboard needs a secure context; a prompt still lets them copy manually.
-      window.prompt("Copy this:", text);
+      // The clipboard needs a secure context. Hand the text over to be copied
+      // by hand instead - a link is far too long for window.prompt() to show.
+      askConfirm({ title: "Copy this", body: "The clipboard is not available here. "
+                     + "Select the text below and copy it.",
+                   copy: text, ok: "Done", cancel: "" });
     }
   }
 
@@ -700,8 +767,11 @@
   }
 
   async function setRevoked(cid, revoked) {
-    if (revoked && !confirm("Withdraw this link? The candidate will not be able to "
-                            + "start or resume their interview with it.")) return;
+    if (revoked && !await askConfirm({
+          title: "Deactivate this link?",
+          body: "The candidate will not be able to start or resume their interview "
+                + "with it. You can restore it afterwards.",
+          ok: "Deactivate", danger: true })) return;
     try {
       await postJSON(`/api/invites/${encodeURIComponent(state.historyId)}`
                      + `/${encodeURIComponent(cid)}/revoke`, { revoked });
@@ -774,9 +844,12 @@ ${mail.body}`, "Invitation copied"));
   /** Conduct this shortlisted candidate's interview here and now, no link. */
   async function interviewNow(row) {
     if (!row) return;
-    if (!confirm(`Start ${properName(row.candidate_name)}'s interview in this browser now?\n\n`
-                 + "Use this when you are sitting with the candidate. To let them take it "
-                 + "in their own time, issue a link instead.")) return;
+    if (!await askConfirm({
+          title: "Start this interview here and now?",
+          detail: properName(row.candidate_name),
+          body: "Use this when you are sitting with the candidate. To let them take it "
+                + "in their own time, send them their link instead.",
+          ok: "Start now" })) return;
     $("planProgress").hidden = false;
     $("planStage").textContent = "Starting";
     $("planDetail").textContent = "";
@@ -1381,7 +1454,9 @@ ${mail.body}`, "Invitation copied"));
   }
 
   async function skipQuestion() {
-    if (!confirm("Skip this question? It will be recorded as unanswered.")) return;
+    if (!await askConfirm({ title: "Skip this question?",
+                            body: "It will be recorded as unanswered.",
+                            ok: "Skip" })) return;
     $("answerText").value = "";
     await submitAnswer("skipped");
   }
@@ -1419,8 +1494,10 @@ ${mail.body}`, "Invitation copied"));
   }
 
   async function abandonInterview() {
-    if (!confirm("End this interview and discard it? The transcript so far is kept " +
-                 "but it will not be evaluated.")) return;
+    if (!await askConfirm({
+          title: "End this interview and discard it?",
+          body: "The transcript so far is kept, but it will not be evaluated.",
+          ok: "End interview", danger: true })) return;
     Speech.cancel();
     if (state.listening) await stopMic();
     Speech.stopMeter();
@@ -1642,8 +1719,10 @@ ${mail.body}`, "Invitation copied"));
   }
 
   async function resetCandidateSettings(cid) {
-    if (!confirm("Drop this candidate's own settings and follow the dashboard "
-                 + "defaults instead?")) return;
+    if (!await askConfirm({
+          title: "Use the dashboard defaults?",
+          body: "This candidate's own settings will be dropped.",
+          ok: "Use defaults" })) return;
     try {
       await api(`/api/candidate-options/${encodeURIComponent(state.historyId)}`
                 + `/${encodeURIComponent(cid)}`, { method: "DELETE" });
@@ -2440,13 +2519,18 @@ ${mail.body}`, "Invitation copied"));
     const more = rows.length > 5 ? ` and ${rows.length - 5} more` : "";
     const completed = rows.filter((r) => r.overall_score != null).length;
 
-    const message = ids.length === 1
-      ? `Delete this interview and its transcript permanently?\n\n${named}`
-      : `Delete ${ids.length} interviews and their transcripts permanently?\n\n`
-        + `${named}${more}\n\n`
-        + (completed ? `${completed} of them have a completed report. ` : "")
-        + "This cannot be undone.";
-    if (!confirm(message)) return;
+    const single = ids.length === 1;
+    if (!await askConfirm({
+          title: single
+            ? "Delete this interview and its transcript permanently?"
+            : `Delete ${ids.length} interviews and their transcripts permanently?`,
+          detail: `${named}${more}`,
+          body: (completed
+                  ? single ? "It has a completed report. "
+                           : `${completed} of them have a completed report. `
+                  : "")
+                + "This cannot be undone.",
+          ok: single ? "Delete" : `Delete ${ids.length}`, danger: true })) return;
 
     const btn = $("histDelete");
     btn.disabled = true;
