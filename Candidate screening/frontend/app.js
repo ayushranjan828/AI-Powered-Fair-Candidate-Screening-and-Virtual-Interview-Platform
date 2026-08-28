@@ -4,16 +4,44 @@
 
   // Bump alongside the ?v= query in index.html. Logged so a stale cached copy
   // is obvious in the console instead of showing up as a dead button.
-  const UI_BUILD = "4 · screening + invite + interview links";
+  const UI_BUILD = "5 · hardening: auth token, failed-run recovery, safer accept";
   console.info(`%cUI build ${UI_BUILD}`, "color:#2f5bd7;font-weight:700");
 
   const $ = (id) => document.getElementById(id);
-  const api = (path, opts) => fetch(path, opts).then(async (r) => {
+
+  // Optional shared access token (APP_ACCESS_TOKEN on the server). Remembered in
+  // localStorage; the first 401 prompts for it and retries once.
+  const TOKEN_KEY = "screeningAccessToken";
+  const authToken = () => { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } };
+  const withToken = (url) => {
+    const t = authToken();
+    return t ? `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(t)}` : url;
+  };
+
+  const api = async (path, opts = {}) => {
+    const doFetch = () => {
+      const headers = { ...(opts.headers || {}) };
+      const t = authToken();
+      if (t) headers["X-Access-Token"] = t;
+      return fetch(path, { ...opts, headers });
+    };
+    let r = await doFetch();
+    if (r.status === 401) {
+      const t = prompt("This server requires an access token (APP_ACCESS_TOKEN in .env):");
+      if (t && t.trim()) {
+        try { localStorage.setItem(TOKEN_KEY, t.trim()); } catch { /* private mode */ }
+        r = await doFetch();
+      }
+    }
     const isJson = (r.headers.get("content-type") || "").includes("json");
     const body = isJson ? await r.json() : await r.text();
-    if (!r.ok) throw new Error((body && body.detail) || r.statusText);
+    if (!r.ok) {
+      // detail can be FastAPI's validation array, not a string — stringify it.
+      const d = body && body.detail;
+      throw new Error(typeof d === "string" ? d : d ? JSON.stringify(d) : r.statusText);
+    }
     return body;
-  });
+  };
 
   const CRITERIA_INFO = {
     education: "Highest qualification vs the education the JD asks for.",
@@ -102,6 +130,14 @@
     $("refreshHistory").addEventListener("click", loadHistory);
     $("refreshSessions").addEventListener("click", loadSessions);
     $("closeDrawer").addEventListener("click", () => { $("drawer").hidden = true; });
+
+    // Escape and a click on the modal backdrop close the overlays.
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { $("modal").hidden = true; $("drawer").hidden = true; }
+    });
+    $("modal").addEventListener("click", (e) => {
+      if (e.target === $("modal")) $("modal").hidden = true;
+    });
 
     // ?session=SES-...&tab=outreach opens a session straight on a given tab, so a
     // recruiter can bookmark or share "the invitations for this shortlist".
@@ -265,6 +301,7 @@
 
     try {
       const res = await api("/api/screen", { method: "POST", body: fd });
+      if (res.duplicates) toast(`${res.duplicates} duplicate resume(s) skipped — identical content`, "");
       setProgress({ stage: "Analysing job description", processed: 0, total: res.total_resumes }, 8);
       pollProgress(res.session_id);
     } catch (err) {
@@ -286,11 +323,20 @@
 
   function pollProgress(sessionId) {
     clearInterval(state.poll);
+    $("startBtn").disabled = true;
+    let misses = 0; // a single blip (laptop sleep, dev reload) must not kill the poll
     state.poll = setInterval(async () => {
       try {
         const p = await api(`/api/sessions/${sessionId}/progress`);
+        misses = 0;
         setProgress(p.progress || {});
-        if (p.status === "completed" || p.status === "accepted") {
+        if (p.status === "failed") {
+          clearInterval(state.poll);
+          $("startBtn").disabled = false;
+          toast(`Screening failed: ${p.error || p.progress?.stage || "see the server log"}. Partial results kept.`, "err");
+          await openSession(sessionId);
+          showTab("results");
+        } else if (p.status === "completed" || p.status === "accepted") {
           clearInterval(state.poll);
           $("startBtn").disabled = false;
           setProgress({ ...(p.progress || {}), stage: "Completed" }, 100);
@@ -299,9 +345,10 @@
           showTab("results");
         }
       } catch (err) {
+        if (++misses < 5) return;
         clearInterval(state.poll);
         $("startBtn").disabled = false;
-        toast(`Lost track of the run: ${err.message}`, "err");
+        toast(`Lost track of the run: ${err.message}. Reopen it from History › Screening sessions.`, "err");
       }
     }, 1800);
   }
@@ -332,15 +379,27 @@
     });
   }
 
+  function confirmDiscardEdits() {
+    return !state.dirty || confirm("You have unsaved edits — discard them and open another record?");
+  }
+
   async function openSession(sessionId) {
+    if (state.session?.session_id !== sessionId && !confirmDiscardEdits()) return;
     const s = await api(`/api/sessions/${sessionId}`);
     state.session = s;
     state.readOnly = Boolean(s.accepted_history_id);
     state.dirty = false; state.page = 1;
     renderResults();
+    // A page reload used to lose track of a running screening entirely.
+    if (s.status === "processing") {
+      $("progressWrap").hidden = false;
+      toast("This screening is still running — progress resumes below", "");
+      pollProgress(sessionId);
+    }
   }
 
   async function openHistory(historyId) {
+    if (!confirmDiscardEdits()) return;
     const h = await api(`/api/history/${historyId}`);
     state.session = { ...h, session_id: h.session_id, is_history: true, history_id: h.history_id };
     state.readOnly = true; state.dirty = false; state.page = 1;
@@ -356,7 +415,8 @@
     $("resJobTitle").textContent = s.job_title || "Shortlist";
     $("resMeta").textContent = s.is_history
       ? `History ${s.history_id} · accepted ${when(s.accepted_at)} by ${s.accepted_by} · threshold ${s.threshold}%`
-      : `Session ${s.session_id} · ${when(s.created_at)} · threshold ${s.threshold}% · ${s.status}`;
+      : `Session ${s.session_id} · ${when(s.created_at)} · threshold ${s.threshold}% · ${s.status}`
+        + (s.status === "failed" && s.error ? ` — ${s.error}` : "");
     $("lockBadge").hidden = !state.readOnly;
 
     const st = s.stats || {};
@@ -481,13 +541,21 @@
       state.dirty = false;
       renderResults();
       toast(`Saved ${res.count} rows`, "ok");
-    } catch (err) { toast(`Save failed: ${err.message}`, "err"); }
+      return true;
+    } catch (err) {
+      toast(`Save failed: ${err.message}`, "err");
+      return false;
+    }
   }
 
   async function acceptShortlist() {
     if (!state.session) { $("modal").hidden = true; return toast("No session to accept", "err"); }
     try {
-      if (state.dirty) await saveEdits();
+      // Accepting freezes the SERVER's copy — if the save failed, going ahead
+      // would silently lock in stale rows without the reviewer's edits.
+      if (state.dirty && !(await saveEdits())) {
+        return toast("Fix the save error first — accepting now would freeze the shortlist without your edits", "err");
+      }
       const res = await api(`/api/sessions/${state.session.session_id}/accept`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -507,10 +575,12 @@
   function downloadExcel() {
     const s = state.session;
     if (!s) return;
+    // Export exactly what the current filter shows — no more REVIEW rows
+    // sneaking into a "shortlisted only" file.
     const url = s.is_history
       ? `/api/history/${s.history_id}/export`
-      : `/api/sessions/${s.session_id}/export?only_shortlisted=${state.filter === "SHORTLISTED"}`;
-    window.location.href = url;
+      : `/api/sessions/${s.session_id}/export${state.filter !== "ALL" ? `?status=${encodeURIComponent(state.filter)}` : ""}`;
+    window.location.href = withToken(url);
   }
 
   /* -------------------------------------------------------------- drawer */
@@ -862,7 +932,7 @@
       $("historyList").querySelectorAll("[data-open]").forEach((b) =>
         b.addEventListener("click", () => openHistory(b.dataset.open)));
       $("historyList").querySelectorAll("[data-xl]").forEach((b) =>
-        b.addEventListener("click", () => { window.location.href = `/api/history/${b.dataset.xl}/export`; }));
+        b.addEventListener("click", () => { window.location.href = withToken(`/api/history/${b.dataset.xl}/export`); }));
       $("historyList").querySelectorAll("[data-delh]").forEach((b) =>
         b.addEventListener("click", async () => {
           if (!confirm("Delete this history record permanently?")) return;
@@ -892,7 +962,7 @@
       $("sessionList").querySelectorAll("[data-opens]").forEach((b) =>
         b.addEventListener("click", async () => { await openSession(b.dataset.opens); showTab("results"); }));
       $("sessionList").querySelectorAll("[data-xls]").forEach((b) =>
-        b.addEventListener("click", () => { window.location.href = `/api/sessions/${b.dataset.xls}/export`; }));
+        b.addEventListener("click", () => { window.location.href = withToken(`/api/sessions/${b.dataset.xls}/export`); }));
       $("sessionList").querySelectorAll("[data-dels]").forEach((b) =>
         b.addEventListener("click", async () => {
           if (!confirm("Delete this screening session?")) return;

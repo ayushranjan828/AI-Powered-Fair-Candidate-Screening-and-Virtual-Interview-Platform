@@ -48,34 +48,59 @@ async def _chat_json(
         ],
         "max_completion_tokens": max_tokens,
         "response_format": {"type": "json_object"},
+        # Scores must be reproducible for the screening to be auditable - the
+        # same resume should not shortlist on Monday and fail on Tuesday.
+        # Deployments that reject the parameter get it stripped below.
+        "temperature": 0,
     }
     headers = {"api-key": config.AZURE_OPENAI_API_KEY, "Content-Type": "application/json"}
 
     last_error = ""
-    for attempt in range(retries + 1):
+    attempt = 0
+    param_fixes = 0
+    while attempt <= retries:
         try:
             resp = await client.post(_chat_url(), json=body, headers=headers)
         except httpx.HTTPError as exc:
             last_error = f"network error: {exc}"
-            await asyncio.sleep(1.5 * (attempt + 1))
+            attempt += 1
+            if attempt <= retries:
+                await asyncio.sleep(1.5 * attempt)
             continue
 
         if resp.status_code == 400:
             detail = resp.text
-            # Older deployments want max_tokens; newer ones want max_completion_tokens.
-            if "max_completion_tokens" in detail and "max_tokens" in detail:
-                body.pop("max_completion_tokens", None)
-                body["max_tokens"] = max_tokens
-                continue
-            if "response_format" in detail:
-                body.pop("response_format", None)
-                continue
+            # Parameter-compatibility fixes: older deployments want max_tokens,
+            # newer ones want max_completion_tokens; some reject response_format
+            # or temperature. These retries do NOT consume an attempt - the call
+            # has not really been tried yet - but are bounded so a deployment
+            # that 400s on everything still terminates.
+            if param_fixes < 3:
+                if "max_completion_tokens" in detail and "max_tokens" in detail:
+                    body.pop("max_completion_tokens", None)
+                    body["max_tokens"] = max_tokens
+                    param_fixes += 1
+                    continue
+                if "response_format" in detail:
+                    body.pop("response_format", None)
+                    param_fixes += 1
+                    continue
+                if "temperature" in detail and "temperature" in body:
+                    body.pop("temperature", None)
+                    param_fixes += 1
+                    continue
             raise AIError(f"Azure OpenAI rejected the request: {detail[:400]}")
 
         if resp.status_code in (429, 500, 502, 503, 504):
-            wait = float(resp.headers.get("retry-after", 2 * (attempt + 1)))
             last_error = f"HTTP {resp.status_code}"
-            await asyncio.sleep(min(wait, 20))
+            attempt += 1
+            if attempt <= retries:
+                # retry-after may be seconds or an HTTP date; only honour numbers.
+                try:
+                    wait = float(resp.headers.get("retry-after", ""))
+                except ValueError:
+                    wait = 2.0 * attempt
+                await asyncio.sleep(min(max(wait, 0.5), 20))
             continue
 
         if resp.status_code >= 400:
@@ -90,6 +115,7 @@ async def _chat_json(
         if parsed is not None:
             return parsed
         last_error = "model did not return valid JSON"
+        attempt += 1
 
     raise AIError(last_error or "AI call failed")
 
@@ -509,7 +535,6 @@ _DEGREES = [
 def fallback_parse(text: str, file_name: str) -> dict:
     """Regex extraction used when the AI call fails, so a row is still produced."""
     email = EMAIL_RE.search(text)
-    phone_candidates = [p.strip() for p in PHONE_RE.findall(text)]
     phone = ""
     for match in PHONE_RE.finditer(text):
         digits = re.sub(r"\D", "", match.group(0))

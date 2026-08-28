@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
+import logging
 import re
 from typing import Any
 from urllib.parse import quote
@@ -15,10 +18,46 @@ from fastapi.staticfiles import StaticFiles
 from . import ai_agent, config, dnsfix, excel_export, interview_link, scoring, storage
 from .extractors import SUPPORTED_DOC_EXTS, extract_upload
 
+logger = logging.getLogger("screening")
+
 app = FastAPI(title="AI-Powered Fair Candidate Screening", version="1.0.0")
 
 # session_id -> live progress (mirrors what is flushed to disk)
 PROGRESS: dict[str, dict] = {}
+
+# Strong references to background screening tasks. asyncio only keeps a weak
+# reference to tasks, so a fire-and-forget task can be garbage-collected mid-run.
+_TASKS: set[asyncio.Task] = set()
+
+# The statuses a reviewer may set on a row. Anything else would silently break
+# the stats, the filters and the accept gate.
+ROW_STATUSES = {"SHORTLISTED", "REVIEW", "NOT_SHORTLISTED", "PARSE_FAILED"}
+
+_EMAIL_OK = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def _valid_email(value) -> bool:
+    return bool(_EMAIL_OK.match(str(value or "").strip()))
+
+
+@app.on_event("startup")
+async def _repair_stale_sessions() -> None:
+    """A restart mid-run used to leave sessions stuck in "processing" forever,
+    blocking accept and outreach with 409s while the UI polled indefinitely.
+    Mark them failed (keeping any partial results) so they can move on."""
+    for meta in storage.list_sessions(limit=1000):
+        if meta.get("status") != "processing":
+            continue
+        session = storage.load_session(meta.get("session_id") or "")
+        if not session:
+            continue
+        session["status"] = "failed"
+        session["error"] = ("The server restarted while this screening was running. "
+                            "Partial results were kept.")
+        session["progress"] = {**session.get("progress", {}),
+                               "stage": "Failed - server restarted mid-run"}
+        storage.save_session(session)
+        logger.warning("Marked stale session %s as failed", session.get("session_id"))
 
 
 # ------------------------------------------------------------------ static UI
@@ -36,6 +75,25 @@ async def _no_cache_frontend(request: Request, call_next):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         response.headers["Pragma"] = "no-cache"
     return response
+
+
+@app.middleware("http")
+async def _access_guard(request: Request, call_next):
+    """Optional shared-token gate for the API.
+
+    Off unless APP_ACCESS_TOKEN is set in .env. The static UI stays reachable so
+    the browser can load the page that then prompts for the token; every /api/*
+    call must carry it. Query-param form exists for the Excel download links,
+    which cannot set headers.
+    """
+    token = config.APP_ACCESS_TOKEN
+    if token and request.url.path.startswith("/api/"):
+        supplied = (request.headers.get("x-access-token")
+                    or request.query_params.get("token") or "")
+        if not hmac.compare_digest(supplied, token):
+            return JSONResponse(status_code=401,
+                                content={"detail": "Missing or wrong access token"})
+    return await call_next(request)
 
 
 if config.FRONTEND_DIR.exists():
@@ -107,11 +165,31 @@ def _stats(candidates: list[dict], failed: int) -> dict:
 
 async def _run_screening(session_id: str, resumes: list[dict], jd_text: str,
                          weights: dict, cutoffs: dict, threshold: float) -> None:
+    """Crash-safe wrapper: an unexpected error marks the session failed instead
+    of silently dying and leaving it stuck in "processing" forever."""
+    try:
+        await _screen_pipeline(session_id, resumes, jd_text, weights, cutoffs, threshold)
+    except Exception as exc:  # noqa: BLE001 - anything here would otherwise vanish
+        logger.exception("Screening %s failed", session_id)
+        session = storage.load_session(session_id) or {"session_id": session_id}
+        session["status"] = "failed"
+        session["error"] = f"{type(exc).__name__}: {exc}"
+        session["progress"] = {**PROGRESS.get(session_id, {}),
+                               "stage": f"Failed: {type(exc).__name__}"}
+        storage.save_session(session)
+    finally:
+        # The final state is on disk now; dropping the mirror keeps PROGRESS
+        # from growing forever (it used to leak one entry per session).
+        PROGRESS.pop(session_id, None)
+
+
+async def _screen_pipeline(session_id: str, resumes: list[dict], jd_text: str,
+                           weights: dict, cutoffs: dict, threshold: float) -> None:
     """Background pipeline: analyse the JD once, then every resume concurrently."""
     session = storage.load_session(session_id) or {}
     progress = PROGRESS.setdefault(session_id, {})
     progress.update({"stage": "Analysing job description", "processed": 0,
-                     "total": len(resumes), "errors": 0})
+                     "total": len(resumes), "errors": 0, "status": "processing"})
 
     limits = httpx.Limits(max_connections=config.MAX_CONCURRENT_AI_CALLS + 4)
     timeout = httpx.Timeout(config.REQUEST_TIMEOUT_SECONDS)
@@ -192,8 +270,9 @@ async def _run_screening(session_id: str, resumes: list[dict], jd_text: str,
     session["candidates"] = candidates
     session["stats"] = _stats(candidates, errors)
     session["status"] = "completed"
-    progress.update({"stage": "Completed", "processed": len(resumes)})
-    session["progress"] = dict(progress)
+    progress.update({"stage": "Completed", "processed": len(resumes), "status": "completed",
+                     "stats": session["stats"]})
+    session["progress"] = {k: v for k, v in progress.items() if k != "stats"}
     storage.save_session(session)
 
 
@@ -211,52 +290,100 @@ async def start_screening(
         raise HTTPException(400, "Job description is required")
     if not files:
         raise HTTPException(400, "Upload at least one resume, folder or ZIP")
+    if len(files) > config.MAX_UPLOAD_FILES:
+        raise HTTPException(413, f"Too many files - the limit is {config.MAX_UPLOAD_FILES} per batch")
 
     try:
         weight_map = scoring.normalize_weights(json.loads(weights) if weights.strip() else None)
         cutoff_map = scoring.normalize_cutoffs(json.loads(cutoffs) if cutoffs.strip() else None)
     except json.JSONDecodeError:
         raise HTTPException(400, "weights/cutoffs must be valid JSON")
+    threshold = max(0.0, min(100.0, float(threshold)))
 
     try:
         rel_paths = json.loads(paths) if paths.strip() else []
     except json.JSONDecodeError:
         rel_paths = []
 
-    # Read + extract before responding so the client learns about unreadable files early.
-    resumes: list[dict] = []
+    # Read the uploads (bounded), then extract in a worker thread: pypdf/XML
+    # parsing is CPU work that would otherwise block the event loop - and with
+    # it every progress poll - for the whole batch.
+    file_cap = int(config.MAX_FILE_MB * 1048576)
+    total_cap = int(config.MAX_TOTAL_UPLOAD_MB * 1048576)
+    total_bytes = 0
+    items: list[tuple[str, bytes | None]] = []
     for idx, upload in enumerate(files):
         raw = await upload.read()
         name = (rel_paths[idx] if idx < len(rel_paths) and rel_paths[idx] else upload.filename) or f"file-{idx}"
-        for extracted in extract_upload(name, raw):
-            resumes.append({"file_name": extracted.file_name, "text": extracted.text,
+        if len(raw) > file_cap:
+            items.append((name, None))  # oversize -> error row, not a dead batch
+            continue
+        total_bytes += len(raw)
+        if total_bytes > total_cap:
+            raise HTTPException(413, f"Upload exceeds the {config.MAX_TOTAL_UPLOAD_MB:g} MB total limit")
+        items.append((name, raw))
+
+    def _extract_all() -> list[dict]:
+        out: list[dict] = []
+        for name, raw in items:
+            if raw is None:
+                out.append({"file_name": name, "text": "",
+                            "error": f"File exceeds the {config.MAX_FILE_MB:g} MB per-file limit"})
+                continue
+            for extracted in extract_upload(name, raw):
+                out.append({"file_name": extracted.file_name, "text": extracted.text,
                             "error": extracted.error})
+        return out
+
+    resumes = await asyncio.to_thread(_extract_all)
 
     if not resumes:
         raise HTTPException(400, "No supported resume files were found in the upload")
+
+    # Identical resume text screens (and bills) once: bulk uploads routinely
+    # contain the same file twice under different names.
+    seen_hash: dict[str, str] = {}
+    unique: list[dict] = []
+    duplicates: list[dict] = []
+    for item in resumes:
+        text = (item.get("text") or "").strip()
+        if text and not item.get("error"):
+            digest = hashlib.sha256(text.encode("utf-8", "ignore")).hexdigest()
+            if digest in seen_hash:
+                duplicates.append({"file_name": item["file_name"],
+                                   "duplicate_of": seen_hash[digest]})
+                continue
+            seen_hash[digest] = item["file_name"]
+        unique.append(item)
+    resumes = unique
 
     session_id = storage.new_id("SES")
     session = {
         "session_id": session_id,
         "job_title": job_title.strip() or "NA",
         "jd_text": jd_text.strip(),
-        "threshold": float(threshold),
+        "threshold": threshold,
         "weights": weight_map,
         "cutoffs": cutoff_map,
         "created_at": storage.now_iso(),
         "status": "processing",
         "candidates": [],
-        "stats": {"total": len(resumes), "parsed": 0, "failed": 0, "shortlisted": 0},
+        "duplicates": duplicates,
+        "stats": {"total": len(resumes), "parsed": 0, "failed": 0, "shortlisted": 0,
+                  "duplicates": len(duplicates)},
         "progress": {"stage": "Queued", "processed": 0, "total": len(resumes), "errors": 0},
         "accepted_history_id": None,
     }
     storage.save_session(session)
-    PROGRESS[session_id] = dict(session["progress"])
+    PROGRESS[session_id] = {**session["progress"], "status": "processing"}
 
-    asyncio.create_task(
-        _run_screening(session_id, resumes, jd_text.strip(), weight_map, cutoff_map, float(threshold))
+    task = asyncio.create_task(
+        _run_screening(session_id, resumes, jd_text.strip(), weight_map, cutoff_map, threshold)
     )
-    return {"session_id": session_id, "total_resumes": len(resumes), "status": "processing"}
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
+    return {"session_id": session_id, "total_resumes": len(resumes),
+            "duplicates": len(duplicates), "status": "processing"}
 
 
 # ------------------------------------------------------------------- sessions
@@ -275,14 +402,26 @@ async def get_session(session_id: str):
 
 @app.get("/api/sessions/{session_id}/progress")
 async def get_progress(session_id: str):
+    # Serve from the in-memory mirror while a run is live: the UI polls every
+    # ~2s and re-reading the whole session JSON (all candidates) per poll was
+    # pure write/read amplification.
+    mem = PROGRESS.get(session_id)
+    if mem:
+        return {
+            "session_id": session_id,
+            "status": mem.get("status", "processing"),
+            "progress": {k: v for k, v in mem.items() if k != "stats"},
+            "stats": mem.get("stats", {}),
+        }
     session = storage.load_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
     return {
         "session_id": session_id,
         "status": session.get("status"),
-        "progress": PROGRESS.get(session_id) or session.get("progress", {}),
+        "progress": session.get("progress", {}),
         "stats": session.get("stats", {}),
+        "error": session.get("error", ""),
     }
 
 
@@ -294,6 +433,10 @@ async def update_candidates(session_id: str, payload: dict = Body(...)):
         raise HTTPException(404, "Session not found")
     if session.get("accepted_history_id"):
         raise HTTPException(409, "This shortlist was already accepted and is locked")
+    if session.get("status") == "processing":
+        # The background run flushes the whole candidate list every few seconds;
+        # edits accepted now would be silently overwritten by the next flush.
+        raise HTTPException(409, "Screening is still running - wait for it to finish before editing")
 
     incoming = payload.get("candidates")
     if not isinstance(incoming, list):
@@ -305,16 +448,23 @@ async def update_candidates(session_id: str, payload: dict = Body(...)):
     for row in incoming:
         if not isinstance(row, dict):
             continue
-        cid = str(row.get("candidate_id") or "").strip() or storage.new_id("CID")
+        requested = str(row.get("candidate_id") or "").strip()
+        original = existing.get(requested)
+        cid = requested or storage.new_id("CID")
+        # A duplicate id in the payload gets a fresh id but keeps merging onto
+        # the original row's data (the old code looked up the base by the NEW
+        # id and merged onto a blank row instead).
         while cid in seen:
             cid = storage.new_id("CID")
-        base = dict(existing.get(cid) or scoring.blank_candidate(cid))
+        base = dict(original) if original else scoring.blank_candidate(cid)
         for key, value in row.items():
             if key in ("candidate_id",):
                 continue
             base[key] = value
         base["candidate_id"] = cid
-        if cid in existing and base != existing[cid]:
+        if base.get("status") not in ROW_STATUSES:
+            base["status"] = (original or {}).get("status") or "REVIEW"
+        if original is not None and base != {**original, "candidate_id": cid}:
             base["edited"] = True
         for field in ("candidate_name", "phone_number", "email_id", "skills",
                       "certification", "experience"):
@@ -352,7 +502,9 @@ async def accept_shortlist(session_id: str, payload: dict = Body(default={})):
     session = storage.load_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
-    if session.get("status") != "completed":
+    # "failed" is acceptable too: a run the server lost mid-way still has
+    # partial results the reviewer may want to freeze.
+    if session.get("status") not in ("completed", "failed"):
         raise HTTPException(409, "Screening is still running")
 
     candidates: list[dict] = session.get("candidates", [])
@@ -456,12 +608,13 @@ def _require_open_session(session_id: str) -> dict:
 
 
 def _eligible_candidates(session: dict, candidate_ids: list[str] | None) -> list[dict]:
-    rows = session.get("candidates", [])
+    # The status filter applies even to explicitly named ids: a NOT_SHORTLISTED
+    # candidate must not be invitable through the raw API either.
+    picked = [c for c in session.get("candidates", [])
+              if c.get("status") in INVITE_ELIGIBLE]
     if candidate_ids:
         wanted = set(candidate_ids)
-        picked = [c for c in rows if c.get("candidate_id") in wanted]
-    else:
-        picked = [c for c in rows if c.get("status") in INVITE_ELIGIBLE]
+        picked = [c for c in picked if c.get("candidate_id") in wanted]
     return picked
 
 
@@ -500,7 +653,7 @@ async def draft_outreach(session_id: str, payload: dict = Body(default={})):
     overwritten.
     """
     session = _require_open_session(session_id)
-    if session.get("status") not in ("completed", "accepted"):
+    if session.get("status") not in ("completed", "accepted", "failed"):
         raise HTTPException(409, "Screening is still running")
 
     candidate_ids = payload.get("candidate_ids")
@@ -556,7 +709,7 @@ async def draft_outreach(session_id: str, payload: dict = Body(default={})):
             "candidate_id": cid,
             "candidate_name": cand.get("candidate_name", "NA"),
             "email_id": email,
-            "has_email": email != "NA" and "@" in email,
+            "has_email": _valid_email(email),
             "status": "DRAFT",
             "subject": drafted["subject"],
             "body": drafted["body"],
@@ -577,10 +730,19 @@ async def draft_outreach(session_id: str, payload: dict = Body(default={})):
     async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
         await asyncio.gather(*(one(client, c) for c in todo))
 
-    session["outreach"] = drafts
+    # The AI calls above take seconds; reload before saving so a concurrent
+    # edit/send is merged rather than clobbered by our stale copy. A draft that
+    # went SENT in the meantime wins over the one we just generated.
+    session = storage.load_session(session_id) or session
+    merged = dict(session.get("outreach", {}))
+    for cand in todo:
+        cid = cand.get("candidate_id")
+        if cid in drafts and merged.get(cid, {}).get("status") != "SENT":
+            merged[cid] = drafts[cid]
+    session["outreach"] = merged
     storage.save_session(session)
     return {"ok": True, "drafted": len(todo), "failures": failures,
-            "skipped": len(targets) - len(todo), "drafts": list(drafts.values())}
+            "skipped": len(targets) - len(todo), "drafts": list(merged.values())}
 
 
 @app.put("/api/sessions/{session_id}/outreach/{candidate_id}")
@@ -606,7 +768,7 @@ async def edit_draft(session_id: str, candidate_id: str, payload: dict = Body(..
         "subject": subject,
         "body": body,
         "email_id": email,
-        "has_email": email != "NA" and "@" in email,
+        "has_email": _valid_email(email),
         "edited": True,
         "edited_at": storage.now_iso(),
     })
@@ -699,12 +861,20 @@ def _xlsx_response(record: dict, name: str) -> Response:
 
 
 @app.get("/api/sessions/{session_id}/export")
-async def export_session(session_id: str, only_shortlisted: bool = False):
+async def export_session(session_id: str, only_shortlisted: bool = False, status: str = ""):
+    """Export the sheet. `status` (comma-separated) exports exactly those rows,
+    so what the reviewer filtered on screen is what lands in the file;
+    `only_shortlisted` is kept for backwards compatibility (SHORTLISTED+REVIEW).
+    """
     session = storage.load_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
     record: dict[str, Any] = dict(session)
-    if only_shortlisted:
+    wanted = {s.strip().upper() for s in status.split(",") if s.strip()}
+    if wanted:
+        record["candidates"] = [c for c in record.get("candidates", [])
+                                if c.get("status") in wanted]
+    elif only_shortlisted:
         record["candidates"] = [c for c in record.get("candidates", [])
                                 if c.get("status") in ("SHORTLISTED", "REVIEW")]
     return _xlsx_response(record, f"{session.get('job_title', 'shortlist')}-{session_id}")
@@ -719,5 +889,10 @@ async def export_history(history_id: str):
 
 
 @app.exception_handler(Exception)
-async def unhandled(_request, exc: Exception):
-    return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
+async def unhandled(request: Request, exc: Exception):
+    # Full traceback to the server log; only the exception class to the client.
+    # Raw error text can leak paths, hostnames and config to whoever calls the API.
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500,
+                        content={"detail": f"Internal server error ({type(exc).__name__}) - "
+                                           "see the server log for details"})

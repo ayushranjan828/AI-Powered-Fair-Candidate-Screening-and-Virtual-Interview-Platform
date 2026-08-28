@@ -37,6 +37,19 @@ SHORTLIST_FILL = PatternFill("solid", fgColor="E7F6EC")
 REVIEW_FILL = PatternFill("solid", fgColor="FFF6E0")
 
 
+def _safe(value):
+    """Neutralise spreadsheet formula injection in candidate-controlled text.
+
+    openpyxl stores a string starting with "=" as a live formula, so a resume
+    field like "=HYPERLINK(...)" would execute in the reviewer's Excel. "+",
+    "@", tab and CR are prefixed too, per the usual injection guidance.
+    (Kept identical in spirit to the interviewer app's excel_export._safe.)
+    """
+    if isinstance(value, str) and value.startswith(("=", "+", "@", "\t", "\r")):
+        return "'" + value
+    return value
+
+
 def build_workbook(record: dict) -> bytes:
     candidates = record.get("candidates", [])
     wb = Workbook()
@@ -54,7 +67,7 @@ def build_workbook(record: dict) -> bytes:
     ws.freeze_panes = "C2"
 
     for cand in candidates:
-        ws.append([cand.get(key, "NA") for key, _, _ in COLUMNS])
+        ws.append([_safe(cand.get(key, "NA")) for key, _, _ in COLUMNS])
         row = ws.max_row
         status = str(cand.get("status", ""))
         if status == "SHORTLISTED":
@@ -96,7 +109,7 @@ def build_workbook(record: dict) -> bytes:
         ("Job Description", (record.get("jd_text") or "")[:30000]),
     ]
     for label, value in rows:
-        meta.append([label, value])
+        meta.append([label, _safe(value)])
     for cell in meta["A"]:
         cell.font = Font(bold=True)
     for cell in meta["B"]:

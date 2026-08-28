@@ -43,6 +43,22 @@ def _env(*names: str, default: str = "") -> str:
     return default
 
 
+def _float_env(name: str, default: str) -> float:
+    """A malformed number in .env falls back to the default instead of
+    crashing the whole app at import time."""
+    try:
+        return float(_env(name, default=default))
+    except ValueError:
+        return float(default)
+
+
+def _int_env(name: str, default: str) -> int:
+    try:
+        return int(_env(name, default=default))
+    except ValueError:
+        return int(default)
+
+
 # --- Azure OpenAI (supports both plain and VITE_ prefixed names) --------------
 AZURE_OPENAI_ENDPOINT = _env("AZURE_OPENAI_ENDPOINT", "VITE_AZURE_OPENAI_ENDPOINT").rstrip("/")
 AZURE_OPENAI_API_KEY = _env("AZURE_OPENAI_API_KEY", "VITE_AZURE_OPENAI_API_KEY")
@@ -54,32 +70,48 @@ AZURE_OPENAI_DEPLOYMENT = _env("AZURE_OPENAI_DEPLOYMENT", "VITE_AZURE_OPENAI_DEP
 AI_CONFIGURED = bool(AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY and AZURE_OPENAI_DEPLOYMENT)
 
 # --- Screening tuning --------------------------------------------------------
-SHORTLIST_THRESHOLD = float(_env("SHORTLIST_THRESHOLD", default="60"))
+SHORTLIST_THRESHOLD = _float_env("SHORTLIST_THRESHOLD", "60")
 
 # Evaluation criteria weights (must sum to 100).
 DEFAULT_WEIGHTS = {
-    "education": float(_env("WEIGHT_EDUCATION", default="15")),
-    "skills": float(_env("WEIGHT_SKILLS", default="35")),
-    "experience": float(_env("WEIGHT_EXPERIENCE", default="25")),
-    "projects": float(_env("WEIGHT_PROJECTS", default="15")),
-    "certifications": float(_env("WEIGHT_CERTIFICATIONS", default="10")),
+    "education": _float_env("WEIGHT_EDUCATION", "15"),
+    "skills": _float_env("WEIGHT_SKILLS", "35"),
+    "experience": _float_env("WEIGHT_EXPERIENCE", "25"),
+    "projects": _float_env("WEIGHT_PROJECTS", "15"),
+    "certifications": _float_env("WEIGHT_CERTIFICATIONS", "10"),
 }
 
 # Per-criterion floors. A candidate below any of these is held back even if the
 # weighted total clears the threshold. 0 disables the floor.
 DEFAULT_CRITERIA_CUTOFFS = {
-    "education": float(_env("CUTOFF_EDUCATION", default="0")),
-    "skills": float(_env("CUTOFF_SKILLS", default="40")),
-    "experience": float(_env("CUTOFF_EXPERIENCE", default="0")),
-    "projects": float(_env("CUTOFF_PROJECTS", default="0")),
-    "certifications": float(_env("CUTOFF_CERTIFICATIONS", default="0")),
+    "education": _float_env("CUTOFF_EDUCATION", "0"),
+    "skills": _float_env("CUTOFF_SKILLS", "40"),
+    "experience": _float_env("CUTOFF_EXPERIENCE", "0"),
+    "projects": _float_env("CUTOFF_PROJECTS", "0"),
+    "certifications": _float_env("CUTOFF_CERTIFICATIONS", "0"),
 }
 
 CRITERIA = ["education", "skills", "experience", "projects", "certifications"]
 
-MAX_CONCURRENT_AI_CALLS = int(_env("MAX_CONCURRENT_AI_CALLS", default="6"))
-MAX_RESUME_CHARS = int(_env("MAX_RESUME_CHARS", default="18000"))
-REQUEST_TIMEOUT_SECONDS = float(_env("REQUEST_TIMEOUT_SECONDS", default="180"))
+MAX_CONCURRENT_AI_CALLS = _int_env("MAX_CONCURRENT_AI_CALLS", "6")
+MAX_RESUME_CHARS = _int_env("MAX_RESUME_CHARS", "18000")
+REQUEST_TIMEOUT_SECONDS = _float_env("REQUEST_TIMEOUT_SECONDS", "180")
+
+# --- Upload limits -------------------------------------------------------------
+# Everything is processed in memory, so unbounded uploads (or a ZIP bomb) could
+# take the whole server down. These caps bound the worst case; oversize items
+# become per-file error rows rather than aborting the batch where possible.
+MAX_UPLOAD_FILES = _int_env("MAX_UPLOAD_FILES", "500")
+MAX_FILE_MB = _float_env("MAX_FILE_MB", "20")
+MAX_TOTAL_UPLOAD_MB = _float_env("MAX_TOTAL_UPLOAD_MB", "300")
+MAX_ZIP_ENTRIES = _int_env("MAX_ZIP_ENTRIES", "1000")
+
+# --- Access control ------------------------------------------------------------
+# Off by default (empty). When set, every /api/* request must carry the token in
+# an X-Access-Token header or ?token= query parameter. The UI prompts for it on
+# the first 401 and remembers it in localStorage. Set this before exposing the
+# app beyond localhost - candidate PII is served by these endpoints.
+APP_ACCESS_TOKEN = _env("APP_ACCESS_TOKEN")
 
 # --- Interview outreach ------------------------------------------------------
 # Identity used in the drafted invitation. Nothing here is ever transmitted:

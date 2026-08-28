@@ -167,6 +167,10 @@ def _patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):  # noq
             name = host
         if not isinstance(name, str) or not name or _is_ip_literal(name):
             raise
+        # Deliberately IPv4/A-record only: the fallback exists for locked-down
+        # corporate machines where v4 is what works. IPv6-only requests re-raise.
+        # Responses are also not source-verified (plain UDP) - acceptable for a
+        # last-resort resolver, not a general-purpose one.
         if family not in (0, socket.AF_INET):
             raise
         ips = _resolve_a(name)
