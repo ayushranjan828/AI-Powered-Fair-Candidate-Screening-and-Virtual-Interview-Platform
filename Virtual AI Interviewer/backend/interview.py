@@ -58,6 +58,11 @@ def build_mix(planned_count: int, categories: list[str] | None) -> dict:
     fixed = {"intro": 1, "closing": 1}
     mix.update(fixed)
     body_keys = [k for k in mix if k not in fixed]
+    # Only intro and closing selected: there is no body to pad, and the growth
+    # loop below would spin forever with nothing to increment - blocking the
+    # whole event loop, since this runs inside the async planning task.
+    if not body_keys:
+        return dict(fixed)
 
     target_body = max(1, planned_count - len(fixed))
     # Trim from the least-weighted categories first, grow the most-weighted.
@@ -220,7 +225,9 @@ def _order_plan(questions: list[dict]) -> list[dict]:
     intro = [q for q in questions if q["category"] == "intro"]
     closing = [q for q in questions if q["category"] == "closing"]
     body = [q for q in questions if q["category"] not in ("intro", "closing")]
-    return (intro[:1] or []) + body + (closing[:1] or [])
+    # A surplus intro or closing question joins the body rather than vanishing,
+    # so the plan keeps the question count it promised.
+    return intro[:1] + intro[1:] + body + closing[1:] + closing[:1]
 
 
 def _default_opening(interview: dict) -> str:
@@ -425,6 +432,23 @@ async def record_answer(interview: dict, turn_number: int, answer: str,
     turn = next((t for t in interview["turns"] if t["turn"] == turn_number), None)
     if turn is None:
         raise KeyError(f"turn {turn_number} was never asked")
+
+    if turn.get("answered_at"):
+        # A replayed submit (double-click, client retry after a network blip)
+        # must not overwrite the stored answer or queue a second follow-up.
+        # Answer it with the same shape the first submit got.
+        assessment = turn.get("assessment") or {}
+        return {
+            "turn": turn_number,
+            "answer_type": assessment.get("answer_type", "no_answer"),
+            "graded": bool(assessment.get("scores")),
+            "grading_source": assessment.get("source", ""),
+            "grading_error": assessment.get("error", ""),
+            "reaction": assessment.get("reaction") or {"line": "", "emotion": "neutral"},
+            "followup_queued": bool(interview["cursor"].get("pending_followup")),
+            "metrics": turn.get("metrics") or {},
+            "progress": _progress(interview),
+        }
 
     metrics = evaluation.answer_metrics(answer, seconds, mode)
     turn.update({

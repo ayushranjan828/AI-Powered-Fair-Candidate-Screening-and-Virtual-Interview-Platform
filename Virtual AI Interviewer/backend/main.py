@@ -7,6 +7,10 @@ performed -> report + Excel export.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
+import logging
+import time
 from urllib.parse import quote
 
 import httpx
@@ -16,6 +20,8 @@ from fastapi.staticfiles import StaticFiles
 
 from . import (ai_agent, candidates, config, dnsfix, evaluation, excel_export,
                interview as engine, interview_link, storage)
+
+logger = logging.getLogger("virtual-interviewer")
 
 app = FastAPI(title="Virtual AI Interviewer", version="1.0.0")
 
@@ -31,7 +37,7 @@ async def _no_cache_frontend(request: Request, call_next):
     """
     response = await call_next(request)
     path = request.url.path
-    if path.startswith("/static/") or path == "/":
+    if path.startswith("/static/") or path.startswith("/i/") or path == "/":
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         response.headers["Pragma"] = "no-cache"
     return response
@@ -136,6 +142,117 @@ async def get_shortlist(history_id: str):
 ONE_OFF_KEY = "__one_off__"
 
 
+# ----------------------------------------------------- candidate session refs
+#
+# The candidate's browser drives the interview loop, so it needs something to
+# put in the URL - but it must never hold the raw interview id: every recruiter
+# route (full record, report, review, delete) is keyed by that id and none of
+# them carry auth. The invite routes therefore hand the candidate an opaque
+# signed reference instead, and only the interview-loop routes accept it. The
+# raw-id routes reject a reference naturally: no interview file matches it.
+
+_SESSION_PREFIX = "cs1"
+
+
+def _session_key() -> bytes | None:
+    secret = interview_link.secret()
+    if not secret:
+        return None
+    return hmac.new(secret, b"candidate-session-v1", hashlib.sha256).digest()
+
+
+def session_ref(interview_id: str) -> str:
+    """An opaque candidate-facing reference to one interview."""
+    key = _session_key()
+    if not key:
+        # No link secret means no candidate can reach this server by link at
+        # all, so there is nobody to hide the raw id from.
+        return interview_id
+    expires = int(time.time()) + interview_link.ttl_days() * 86400
+    body = f"{_SESSION_PREFIX}.{interview_id}.{expires}"
+    signature = hmac.new(key, body.encode("ascii"), hashlib.sha256).hexdigest()[:32]
+    return f"{body}.{signature}"
+
+
+def _parse_session_ref(ref: str) -> str | None:
+    key = _session_key()
+    parts = str(ref or "").split(".")
+    if not key or len(parts) != 4 or parts[0] != _SESSION_PREFIX:
+        return None
+    body = ".".join(parts[:3])
+    expected = hmac.new(key, body.encode("ascii"), hashlib.sha256).hexdigest()[:32]
+    if not hmac.compare_digest(parts[3], expected):
+        return None
+    try:
+        if int(parts[2]) < time.time():
+            return None
+    except ValueError:
+        return None
+    return parts[1]
+
+
+def _require_ref(ref: str) -> tuple[dict, bool]:
+    """(record, came via a candidate reference) for a raw id or a session ref.
+
+    A raw id contains no dot, a reference always does, so the two cannot be
+    confused - and a reference that fails verification is simply "not found".
+    """
+    if "." in str(ref):
+        interview_id = _parse_session_ref(ref)
+        if not interview_id:
+            raise HTTPException(404, "Interview not found")
+        return _require(interview_id), True
+    return _require(ref), False
+
+
+# --------------------------------------------------------- background planning
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn_plan(interview_id: str) -> None:
+    """Plan in the background without ever stranding a record in `planning`.
+
+    The task reference is kept (a bare create_task can be garbage-collected
+    mid-run), and a crash that engine.plan_interview did not handle itself
+    downgrades the interview to the built-in question set instead of leaving
+    both UIs polling a status that will never change.
+    """
+    async def runner() -> None:
+        try:
+            await engine.plan_interview(interview_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("planning failed for %s", interview_id)
+            try:
+                record = storage.load_interview(interview_id)
+                if not record or record.get("status") != engine.STATUS_PLANNING:
+                    return
+                plan = ai_agent.fallback_plan(
+                    record.get("candidate") or {},
+                    record.get("jd_analysis") or {},
+                    (record.get("options") or {}).get("planned_count")
+                    or config.PLANNED_QUESTION_COUNT,
+                )
+                record["plan"] = plan
+                record["plan_error"] = (
+                    f"{record.get('plan_error', '')} Planning failed ({exc}); "
+                    f"the built-in question set was used."
+                ).strip()
+                record["status"] = engine.STATUS_READY
+                record["progress"] = {
+                    "stage": "Ready",
+                    "detail": f"{len(plan['questions'])} questions prepared.",
+                }
+                engine.PROGRESS[interview_id] = dict(record["progress"])
+                storage.save_interview(record)
+            except Exception:  # noqa: BLE001
+                logger.exception("could not record the planning failure for %s",
+                                 interview_id)
+
+    task = asyncio.create_task(runner())
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+
+
 def _resolve_invite(token: str) -> tuple[dict, dict]:
     """(claims, context) for a valid link, or raise the right HTTP error.
 
@@ -228,20 +345,33 @@ async def invite_info(token: str):
         "job_title": ctx["job_title"],
         "company": config.COMPANY_NAME,
         "interviewer": {"name": config.INTERVIEWER_NAME, "role": config.INTERVIEWER_ROLE},
-        # Only sent for a resumable interview, so a finished one cannot be reopened.
-        "interview_id": existing["interview_id"] if state in ("resume", "preparing") else None,
+        # Only sent for a resumable interview, so a finished one cannot be
+        # reopened - and as an opaque reference, never as the raw id.
+        "interview_id": (session_ref(existing["interview_id"])
+                         if state in ("resume", "preparing") else None),
         "answered": answered,
         "expires_at": claims.get("expires_at"),
     }
 
 
+# One start at a time: the existing-interview check and the create are not
+# atomic, so two rapid clicks on "Begin" could otherwise both pass the check
+# and mint two interviews for the same person.
+_START_LOCK = asyncio.Lock()
+
+
 @app.post("/api/invite/{token}/start")
 async def invite_start(token: str):
-    """Create or resume this candidate's interview, and return its id.
+    """Create or resume this candidate's interview, and return a reference to it.
 
     Idempotent by design: clicking the link twice, or reloading mid-interview,
     must never produce a second interview for the same person.
     """
+    async with _START_LOCK:
+        return await _invite_start_locked(token)
+
+
+async def _invite_start_locked(token: str):
     claims, ctx = _resolve_invite(token)
     existing = ctx["existing"]
     state = _invite_state(existing)
@@ -257,12 +387,12 @@ async def invite_start(token: str):
         if state == "abandoned":
             raise HTTPException(409, "This interview was closed by the team. Please "
                                      "contact the recruiter who invited you.")
-        return {"interview_id": existing["interview_id"],
+        return {"interview_id": session_ref(existing["interview_id"]),
                 "status": existing["status"],
                 "resumed": bool(existing.get("turns"))}
 
     if state in ("resume", "preparing"):
-        return {"interview_id": existing["interview_id"],
+        return {"interview_id": session_ref(existing["interview_id"]),
                 "status": existing["status"], "resumed": True}
 
     # Whatever the recruiter chose when they issued the link. Falls back to the
@@ -293,9 +423,9 @@ async def invite_start(token: str):
             "started_by": "candidate",
         },
     )
-    asyncio.create_task(engine.plan_interview(record["interview_id"]))
-    return {"interview_id": record["interview_id"], "status": record["status"],
-            "resumed": False}
+    _spawn_plan(record["interview_id"])
+    return {"interview_id": session_ref(record["interview_id"]),
+            "status": record["status"], "resumed": False}
 
 
 # ------------------------------------------------------ dashboard (recruiter)
@@ -989,7 +1119,7 @@ async def create_interview(payload: dict = Body(...)):
         raise HTTPException(400, "The job description is required")
 
     record = engine.create_interview(row, jd_text, jd_analysis, job_title, options, source)
-    asyncio.create_task(engine.plan_interview(record["interview_id"]))
+    _spawn_plan(record["interview_id"])
     return {"interview_id": record["interview_id"], "status": record["status"]}
 
 
@@ -1005,8 +1135,14 @@ async def get_interview(interview_id: str, full: bool = False):
     The default view is safe to hold open in front of the candidate: no scores,
     no expected answers. See interview.public_view().
     """
-    record = _require(interview_id)
-    return record if full else engine.public_view(record)
+    record, is_session = _require_ref(interview_id)
+    # A candidate session never gets the full record, whatever it asks for -
+    # and gets its own reference echoed back, never the raw id.
+    if full and not is_session:
+        return record
+    view = engine.public_view(record)
+    view["interview_id"] = interview_id
+    return view
 
 
 @app.get("/api/interviews/{interview_id}/details")
@@ -1074,12 +1210,13 @@ async def interview_details(interview_id: str):
 
 @app.get("/api/interviews/{interview_id}/status")
 async def interview_status(interview_id: str):
-    record = _require(interview_id)
+    record, _is_session = _require_ref(interview_id)
     plan = record.get("plan") or {}
     return {
         "interview_id": interview_id,
         "status": record["status"],
-        "progress": engine.PROGRESS.get(interview_id) or record.get("progress", {}),
+        "progress": (engine.PROGRESS.get(record["interview_id"])
+                     or record.get("progress", {})),
         "planned_total": len(plan.get("questions", [])),
         "plan_source": plan.get("source"),
         "plan_error": record.get("plan_error", ""),
@@ -1089,7 +1226,7 @@ async def interview_status(interview_id: str):
 @app.post("/api/interviews/{interview_id}/next")
 async def next_prompt(interview_id: str):
     """What the interviewer says next."""
-    record = _require(interview_id)
+    record, _is_session = _require_ref(interview_id)
     if record["status"] == engine.STATUS_PLANNING:
         raise HTTPException(409, "The question plan is still being written")
     if record["status"] in (engine.STATUS_COMPLETED, engine.STATUS_ABANDONED):
@@ -1102,7 +1239,7 @@ async def next_prompt(interview_id: str):
 @app.post("/api/interviews/{interview_id}/answer")
 async def submit_answer(interview_id: str, payload: dict = Body(...)):
     """Record one answer, grade it, and decide whether to follow up."""
-    record = _require(interview_id)
+    record, _is_session = _require_ref(interview_id)
     if record["status"] not in (engine.STATUS_READY, engine.STATUS_IN_PROGRESS):
         raise HTTPException(409, f"This interview is {record['status']}")
 
@@ -1129,13 +1266,23 @@ async def submit_answer(interview_id: str, payload: dict = Body(...)):
 @app.post("/api/interviews/{interview_id}/finish")
 async def finish_interview(interview_id: str):
     """Close the interview and produce the report."""
-    record = _require(interview_id)
+    record, is_session = _require_ref(interview_id)
+    if record["status"] == engine.STATUS_ABANDONED:
+        # Discarded means "will not be evaluated" - a finish call must not
+        # quietly resurrect it as completed.
+        raise HTTPException(409, "This interview was discarded")
     if record["status"] == engine.STATUS_COMPLETED and record.get("report"):
+        if is_session:
+            return {"interview_id": interview_id, "ok": True}
         return {"interview_id": interview_id, "report": record["report"],
                 "detail": "Already evaluated - returning the existing report."}
     if record["status"] == engine.STATUS_PLANNING:
         raise HTTPException(409, "The question plan is still being written")
     report = await engine.finalize(record)
+    # The candidate may close their own interview out, but the report - with
+    # every score in it - is for the recruiter only.
+    if is_session:
+        return {"interview_id": interview_id, "ok": True}
     return {"interview_id": interview_id, "report": report}
 
 
@@ -1147,6 +1294,8 @@ async def regrade_interview(interview_id: str):
     grades they were given on the day; only the write-up is rebuilt.
     """
     record = _require(interview_id)
+    if record["status"] == engine.STATUS_ABANDONED:
+        raise HTTPException(409, "That interview was discarded")
     if not record.get("turns"):
         raise HTTPException(400, "There is no transcript to review")
     report = await engine.regrade(record)
@@ -1298,5 +1447,8 @@ async def export_interview(interview_id: str):
 
 
 @app.exception_handler(Exception)
-async def unhandled(_request, exc: Exception):
-    return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
+async def unhandled(request: Request, exc: Exception):
+    # The traceback goes to the server log; the client - which may be a
+    # candidate's browser - learns nothing about the internals.
+    logger.exception("unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})

@@ -196,6 +196,8 @@ window.Speech = (function () {
         if (current === session) current = null;
         resolve(result);
       };
+      // Exposed so cancel() can settle this promise from outside the closure.
+      session.done = done;
 
       /* The mouth is driven by the timeline, never by the audio itself - there
        * is no way to read the synthesiser's output signal from the page. */
@@ -279,11 +281,14 @@ window.Speech = (function () {
   }
 
   function cancel() {
-    if (current) {
-      current.cancelled = true;
-      if (current.raf) cancelAnimationFrame(current.raf);
-      current.finished = true;
+    const session = current;
+    if (session) {
       current = null;
+      session.cancelled = true;
+      // Resolve the in-flight speak() promise rather than abandoning it: a
+      // caller awaiting it (the interview loop) would otherwise hang with its
+      // busy flag set, freezing the interview.
+      session.done?.({ spoke: false, reason: "cancelled" });
     }
     if (synth) {
       try { synth.cancel(); } catch { /* nothing in flight */ }

@@ -10,7 +10,7 @@
 
   // Bump alongside the ?v= query in index.html. Logged so a stale cached copy is
   // obvious in the console instead of showing up as a dead button.
-  const UI_BUILD = "7 · off-shortlist interviews get a sendable link";
+  const UI_BUILD = "8 · review fixes: speech cancel, discarded rows";
   console.info(`%cUI build ${UI_BUILD}`, "color:#2f5bd7;font-weight:700");
 
   const $ = (id) => document.getElementById(id);
@@ -2326,8 +2326,12 @@ ${mail.body}`, "Invitation copied"));
         ${r.overall_score != null
           ? `<button class="btn btn-ghost" data-rep="${esc(r.interview_id)}">Open report</button>
              <button class="btn btn-ghost" data-xl="${esc(r.interview_id)}">⬇ Excel</button>`
-          : `<button class="btn btn-ghost" data-resume="${esc(r.interview_id)}">${
-               r.status === "planning" ? "Open" : "Resume"}</button>`}
+          : r.status === "abandoned"
+            // A discarded interview cannot be resumed; the row itself still
+            // opens its details.
+            ? ""
+            : `<button class="btn btn-ghost" data-resume="${esc(r.interview_id)}">${
+                 r.status === "planning" ? "Open" : "Resume"}</button>`}
         <button class="btn btn-ghost" data-del="${esc(r.interview_id)}">Delete</button>
       </div>
     </div>`;

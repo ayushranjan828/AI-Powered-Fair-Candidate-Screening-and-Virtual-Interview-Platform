@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -10,6 +11,10 @@ from pathlib import Path
 from . import config
 
 _LOCK = threading.RLock()
+
+# The id becomes a file name, so anything but this shape (see new_id) is
+# rejected before it can reach the filesystem - "..\\evil" must never be a path.
+_SAFE_ID = re.compile(r"[A-Za-z]+-[0-9A-Fa-f]{4,32}")
 
 
 def now_iso() -> str:
@@ -35,20 +40,30 @@ def _read(path: Path) -> dict | None:
         return None
 
 
-def interview_path(interview_id: str) -> Path:
-    return config.INTERVIEWS_DIR / f"{interview_id}.json"
+def interview_path(interview_id: str) -> Path | None:
+    """The file for one interview, or None for anything not shaped like an id."""
+    name = str(interview_id or "")
+    if not _SAFE_ID.fullmatch(name):
+        return None
+    return config.INTERVIEWS_DIR / f"{name}.json"
 
 
 def save_interview(interview: dict) -> dict:
+    path = interview_path(interview.get("interview_id"))
+    if path is None:
+        raise ValueError(f"invalid interview id: {interview.get('interview_id')!r}")
     with _LOCK:
         interview["updated_at"] = now_iso()
-        _write_atomic(interview_path(interview["interview_id"]), interview)
+        _write_atomic(path, interview)
     return interview
 
 
 def load_interview(interview_id: str) -> dict | None:
+    path = interview_path(interview_id)
+    if path is None:
+        return None
     with _LOCK:
-        return _read(interview_path(interview_id))
+        return _read(path)
 
 
 def list_interviews(limit: int = 200) -> list[dict]:
@@ -183,11 +198,15 @@ def candidate_options_for(shortlist_id: str) -> dict:
 
 
 def find_by_invite(shortlist_id: str, candidate_id: str) -> dict | None:
-    """The most recent interview started from a given invite link.
+    """The most recent interview for one candidate on one shortlist.
 
-    Used so that a candidate who closes the tab and clicks the link again resumes
-    instead of starting a second interview - and so that somebody who has already
-    finished cannot quietly take it twice.
+    Matches however it was started - from the candidate's link ("invite") or run
+    by the recruiter from the dashboard row ("screening", which keys the
+    shortlist as history_id). Used so that a candidate who closes the tab and
+    clicks the link again resumes instead of starting a second interview, so
+    that somebody who has already finished cannot quietly take it twice, and so
+    the dashboard row reflects recruiter-run interviews too. An interview from
+    the manual one-off form carries no shortlist linkage and never matches.
     """
     matches: list[dict] = []
     with _LOCK:
@@ -196,17 +215,20 @@ def find_by_invite(shortlist_id: str, candidate_id: str) -> dict | None:
             if not data:
                 continue
             source = data.get("source") or {}
-            if (source.get("kind") == "invite"
-                    and source.get("shortlist_id") == shortlist_id
-                    and source.get("candidate_id") == candidate_id):
+            if source.get("kind") not in ("invite", "screening"):
+                continue
+            key = source.get("shortlist_id") or source.get("history_id") or ""
+            if key == shortlist_id and source.get("candidate_id") == candidate_id:
                 matches.append(data)
     matches.sort(key=lambda d: d.get("created_at") or "", reverse=True)
     return matches[0] if matches else None
 
 
 def delete_interview(interview_id: str) -> bool:
+    path = interview_path(interview_id)
+    if path is None:
+        return False
     with _LOCK:
-        path = interview_path(interview_id)
         if path.exists():
             path.unlink()
             return True
