@@ -4,7 +4,7 @@
 
   // Bump alongside the ?v= query in index.html. Logged so a stale cached copy
   // is obvious in the console instead of showing up as a dead button.
-  const UI_BUILD = "5 · hardening: auth token, failed-run recovery, safer accept";
+  const UI_BUILD = "6 · full visual redesign: workflow sidebar, new design system";
   console.info(`%cUI build ${UI_BUILD}`, "color:#2f5bd7;font-weight:700");
 
   const $ = (id) => document.getElementById(id);
@@ -110,16 +110,20 @@
       pill.textContent = "AI not configured — check .env"; pill.className = "pill pill-bad";
     }
 
+    // Keeps the slider's filled track (--_fill) and the % readout in sync.
+    const syncThreshold = () => {
+      const t = $("threshold");
+      t.style.setProperty("--_fill", `${t.value}%`);
+      $("thresholdOut").textContent = `${t.value}%`;
+    };
     renderCriteria();
     $("threshold").value = state.cfg.default_threshold ?? 60;
-    $("thresholdOut").textContent = `${$("threshold").value}%`;
-    $("threshold").addEventListener("input", (e) => {
-      $("thresholdOut").textContent = `${e.target.value}%`;
-    });
+    syncThreshold();
+    $("threshold").addEventListener("input", syncThreshold);
     $("resetCriteria").addEventListener("click", () => {
       renderCriteria();
       $("threshold").value = state.cfg.default_threshold ?? 60;
-      $("thresholdOut").textContent = `${$("threshold").value}%`;
+      syncThreshold();
     });
 
     wireUploads();
