@@ -4,29 +4,45 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Virtual AI Interviewer</title>
-<link rel="stylesheet" href="/static/styles.css?v=3" />
+<link rel="stylesheet" href="/static/styles.css?v=4" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>" />
 </head>
 <body>
 
-<header class="topbar">
+<div class="shell">
+
+<aside class="sidebar">
   <div class="brand">
     <span class="logo">🎙️</span>
-    <div>
+    <div class="brand-text">
       <h1>Virtual AI Interviewer</h1>
-      <p>Resume &amp; JD-driven questions &middot; live follow-ups &middot; performance-based scoring</p>
+      <p>Live follow-ups · fair scoring</p>
     </div>
   </div>
-  <div class="topbar-right">
+
+  <nav class="tabs" aria-label="Workflow steps">
+    <button class="tab active" data-tab="setup">
+      <span class="step-n">1</span>
+      <span class="step-t">Dashboard<small>Shortlist, links &amp; settings</small></span>
+    </button>
+    <button class="tab" data-tab="stage">
+      <span class="step-n">2</span>
+      <span class="step-t">Interview<small>Live interview stage</small></span>
+    </button>
+    <button class="tab" data-tab="report">
+      <span class="step-n">3</span>
+      <span class="step-t">Report<small>Scores &amp; decisions</small></span>
+    </button>
+    <button class="tab" data-tab="history">
+      <span class="step-n">4</span>
+      <span class="step-t">History<small>All interviews</small></span>
+    </button>
+  </nav>
+
+  <div class="side-foot">
     <span id="aiStatus" class="pill pill-muted">checking AI…</span>
-    <nav class="tabs">
-      <button class="tab active" data-tab="setup">1 · Dashboard</button>
-      <button class="tab" data-tab="stage">2 · Interview</button>
-      <button class="tab" data-tab="report">3 · Report</button>
-      <button class="tab" data-tab="history">4 · History</button>
-    </nav>
   </div>
-</header>
+</aside>
 
 <main>
 <!-- ========================================================= DASHBOARD TAB -->
@@ -518,6 +534,7 @@
   </div>
 </section>
 </main>
+</div>
 
 <!-- Side drawer: the invitation text for one candidate -->
 <aside id="drawer" class="drawer" hidden>
