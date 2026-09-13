@@ -266,6 +266,7 @@ table.grid tr.picked td{background:var(--brand-soft)}
   background:linear-gradient(180deg,#eef0fe,#e4e7fb)}
 .avatar-stage{width:100%;aspect-ratio:420/440;display:block}
 .avatar-svg{width:100%;height:100%;display:block}
+.avatar-canvas{width:100%;height:100%;display:block}
 .avatar-badge{position:absolute;top:12px;left:12px;display:flex;align-items:center;gap:7px;
   background:rgba(20,23,42,.82);color:#fff;padding:5px 12px;border-radius:99px;font-size:12px;
   font-weight:600;backdrop-filter:blur(4px)}

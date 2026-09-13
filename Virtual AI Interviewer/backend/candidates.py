@@ -31,9 +31,9 @@ def _read(path: Path) -> dict | None:
 def _history_files() -> list[Path]:
     """Every accepted-shortlist file, de-duplicated by file name.
 
-    The screening app has been run from two working directories over its life, so
-    its history can sit in either `data/history` or `backend/data/history`. Both
-    are read; the same record in both places is counted once.
+    Reads only the folder the screening app itself uses - see the note on
+    config.SCREENING_DATA_DIRS for why the old second location was dropped. The
+    loop and de-duplication stay because SCREENING_DATA_DIR can point elsewhere.
     """
     seen: set[str] = set()
     found: list[Path] = []
@@ -118,8 +118,8 @@ def pick_candidate(history_id: str, candidate_id: str) -> dict | None:
 
 # ------------------------------------------------------------- invite resolution
 def _session_files() -> list[Path]:
-    """Screening sessions, de-duplicated by file name. Same two-location story
-    as _history_files()."""
+    """Screening sessions, de-duplicated by file name. Same single-location
+    story as _history_files()."""
     seen: set[str] = set()
     found: list[Path] = []
     for base in config.SCREENING_DATA_DIRS:
