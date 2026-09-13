@@ -26,6 +26,28 @@ logger = logging.getLogger("virtual-interviewer")
 app = FastAPI(title="Virtual AI Interviewer", version="1.0.0")
 
 
+@app.on_event("startup")
+async def _warn_legacy_data() -> None:
+    """Announce shortlists left in the screening app's pre-move data folder.
+
+    That folder is deliberately not read any more (see config.SCREENING_DATA_DIRS).
+    Staying silent about files found there would just trade one confusing failure
+    for another, so say plainly what was found and what to do with it.
+    """
+    stale = config.legacy_screening_files()
+    if not stale:
+        return
+    logger.warning(
+        "%d screening file(s) found in the legacy folder %s and are NOT being read. "
+        "The screening app does not read this folder either, so records here cannot "
+        "be managed from its UI. Move them into %s to use them, or delete them: %s",
+        len(stale),
+        config.LEGACY_SCREENING_DATA,
+        config.SCREENING_DATA_DIRS[0],
+        ", ".join(p.name for p in stale[:10]) + (" …" if len(stale) > 10 else ""),
+    )
+
+
 # ------------------------------------------------------------------ static UI
 @app.middleware("http")
 async def _no_cache_frontend(request: Request, call_next):
@@ -115,10 +137,18 @@ async def ai_check():
 # ------------------------------------------------------- screening hand-off
 @app.get("/api/shortlists")
 async def get_shortlists():
-    """Accepted shortlists from the screening app, if it has produced any."""
+    """Accepted shortlists from the screening app, if it has produced any.
+
+    `legacy_*` describes files stranded in the pre-move folder. It is reported
+    rather than read, because "no shortlists found" while files sit in a folder
+    nobody mentions is the exact dead end this is here to prevent.
+    """
+    stale = config.legacy_screening_files()
     return {
         "shortlists": candidates.list_shortlists(),
         "searched": [str(p / "history") for p in config.SCREENING_DATA_DIRS],
+        "legacy_count": len(stale),
+        "legacy_dir": str(config.LEGACY_SCREENING_DATA) if stale else "",
     }
 
 

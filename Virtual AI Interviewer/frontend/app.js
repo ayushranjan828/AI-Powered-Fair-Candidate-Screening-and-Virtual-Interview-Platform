@@ -504,7 +504,14 @@
         note.textContent =
           "No accepted shortlist was found from the screening app. Accept one there "
           + "first, or use “Interview somebody not on a shortlist” below. Looked in: "
-          + (data.searched || []).join("  ·  ");
+          + (data.searched || []).join("  ·  ")
+          // Files in the old folder are not read. Without this the page would say
+          // "nothing found" while the records sit right there, unmentioned.
+          + (data.legacy_count
+              ? `  —  note: ${data.legacy_count} file(s) are sitting in the old folder `
+                + `${data.legacy_dir}, which is no longer read. Move them into the folder `
+                + `above to use them.`
+              : "");
         return;
       }
       select.innerHTML = `<option value="">Choose a shortlist…</option>`

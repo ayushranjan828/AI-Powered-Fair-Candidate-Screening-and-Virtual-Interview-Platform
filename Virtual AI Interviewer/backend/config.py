@@ -154,13 +154,38 @@ VERDICT_FLOOR = "NO_HIRE"
 HOLISTIC_BLEND = float(_env("HOLISTIC_BLEND", default="0.5"))
 
 # --- Screening hand-off ------------------------------------------------------
-# Where to look for shortlists accepted in the screening app. The first existing
-# directory wins for writes; all of them are read.
+# Where to look for shortlists accepted in the screening app. Read-only: nothing
+# here ever writes into the screening app's folder.
+#
+# ONE location on purpose, and it must be the same one the screening app itself
+# uses (its config.BASE_DIR / "data"). This used to also read
+# "backend/data" - a folder an older version of the screening app wrote to.
+# That was a trap rather than a kindness: the screening app never reads it, so a
+# shortlist sitting there showed up in this app's dashboard while being
+# invisible - and therefore undeletable - in the screening UI. A record you can
+# see but cannot manage is worse than one you cannot see at all.
+#
+# Point SCREENING_DATA_DIR at a different folder if the screening app keeps its
+# data somewhere else; legacy files are otherwise reported by _warn_legacy_data()
+# below so they can be moved deliberately rather than read behind your back.
 SCREENING_APP_DIR = BASE_DIR.parent / "Candidate screening"
-SCREENING_DATA_DIRS = [
-    SCREENING_APP_DIR / "data",
-    SCREENING_APP_DIR / "backend" / "data",
-]
+_DEFAULT_SCREENING_DATA = SCREENING_APP_DIR / "data"
+
 _extra = _env("SCREENING_DATA_DIR")
-if _extra:
-    SCREENING_DATA_DIRS.insert(0, Path(_extra))
+SCREENING_DATA_DIRS = [Path(_extra) if _extra else _DEFAULT_SCREENING_DATA]
+
+# The folder the old layout used. Not read - only checked, so a leftover copy is
+# announced instead of silently resurfacing.
+LEGACY_SCREENING_DATA = SCREENING_APP_DIR / "backend" / "data"
+
+
+def legacy_screening_files() -> list[Path]:
+    """Shortlist/session files still sitting in the pre-move folder, if any."""
+    if not LEGACY_SCREENING_DATA.is_dir() or LEGACY_SCREENING_DATA in SCREENING_DATA_DIRS:
+        return []
+    found: list[Path] = []
+    for sub in ("history", "sessions"):
+        directory = LEGACY_SCREENING_DATA / sub
+        if directory.is_dir():
+            found.extend(sorted(directory.glob("*.json")))
+    return found
