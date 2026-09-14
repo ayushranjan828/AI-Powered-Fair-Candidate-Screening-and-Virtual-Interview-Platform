@@ -1,0 +1,305 @@
+/* =========================================================================
+   Virtual AI Interviewer — design system
+   Tokens first, then primitives, then layout, then feature blocks.
+   Shares its shape with the screening app so the two read as one product.
+   ========================================================================= */
+
+@import "./layout.css";
+@import "./components.css";
+@import "./features.css";
+
+:root {
+  color-scheme: light dark;
+
+  /* Neutrals ---------------------------------------------------------- */
+  --bg: #f6f7fb;
+  --bg-elev: #ffffff;
+  --bg-sunken: #eef0f6;
+  --surface-2: #f9fafc;
+  --line: #e2e5ee;
+  --line-strong: #cdd2e0;
+
+  --ink: #131722;
+  --ink-2: #3d4456;
+  --muted: #6b7285;
+  --faint: #9aa0b1;
+
+  /* Brand — teal, so the interviewer is visibly a different room from the
+     screening app's indigo while sharing its structure. ------------------ */
+  --brand: #0d7d85;
+  --brand-ink: #ffffff;
+  --brand-hover: #0a666d;
+  --brand-soft: #e3f4f5;
+  --brand-ring: rgba(13, 125, 133, 0.3);
+
+  /* Semantic ---------------------------------------------------------- */
+  --ok: #0f9d58;
+  --ok-soft: #e6f6ed;
+  --warn: #b76e00;
+  --warn-soft: #fdf2e0;
+  --bad: #d13438;
+  --bad-soft: #fdeceb;
+  --info: #0b6bcb;
+  --info-soft: #e8f1fd;
+  --live: #c2185b;
+  --live-soft: #fce4ec;
+
+  /* Shape ------------------------------------------------------------- */
+  --r-sm: 7px;
+  --r: 12px;
+  --r-lg: 18px;
+  --r-pill: 999px;
+
+  --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-2: 0 2px 10px rgba(16, 24, 40, 0.07), 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-3: 0 14px 40px rgba(16, 24, 40, 0.14);
+  --shadow-pop: 0 24px 60px rgba(16, 24, 40, 0.2);
+
+  --sidebar-w: 272px;
+
+  --font: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+    "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Code", ui-monospace, "SF Mono", Consolas, monospace;
+
+  --t-fast: 120ms cubic-bezier(0.4, 0, 0.2, 1);
+  --t: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1118;
+    --bg-elev: #161a24;
+    --bg-sunken: #10141d;
+    --surface-2: #1b2030;
+    --line: #262d3d;
+    --line-strong: #353e52;
+
+    --ink: #eef1f8;
+    --ink-2: #c3c9d8;
+    --muted: #8d95a9;
+    --faint: #6c7489;
+
+    --brand: #2fb8c0;
+    --brand-ink: #05181a;
+    --brand-hover: #46c8cf;
+    --brand-soft: #0f2b2e;
+    --brand-ring: rgba(47, 184, 192, 0.34);
+
+    --ok: #3ecf8e;
+    --ok-soft: #10281e;
+    --warn: #e6a13a;
+    --warn-soft: #2a2011;
+    --bad: #f4736f;
+    --bad-soft: #2d1618;
+    --info: #5aa9f5;
+    --info-soft: #11202f;
+    --live: #f06292;
+    --live-soft: #2e1420;
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --shadow-2: 0 2px 12px rgba(0, 0, 0, 0.45);
+    --shadow-3: 0 16px 44px rgba(0, 0, 0, 0.6);
+    --shadow-pop: 0 26px 64px rgba(0, 0, 0, 0.7);
+  }
+}
+
+/* ------------------------------------------------------------------ reset */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* The candidate page is one centred column, not a console. */
+body.candidate #root {
+  display: flex;
+  flex-direction: column;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5 {
+  margin: 0;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: 20px;
+}
+h3 {
+  font-size: 15px;
+}
+h4 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-top: 6px;
+}
+h5 {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+p {
+  margin: 0;
+}
+
+ul {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+
+li {
+  margin: 3px 0;
+}
+
+a {
+  color: var(--brand);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+code,
+pre {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: var(--brand-ring);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border: 2px solid var(--bg);
+  border-radius: var(--r-pill);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--faint);
+}
+
+/* ----------------------------------------------------------- text helpers */
+.sub {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.mini-head {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.mini-head em {
+  font-style: normal;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.warn-text {
+  color: var(--warn);
+}
+.bad-text {
+  color: var(--bad);
+}
+.ok-text {
+  color: var(--ok);
+}
+
+/* An aside that is part of the page rather than a toast. */
+.inline-note {
+  padding: 10px 13px;
+  border-radius: var(--r-sm);
+  border: 1px solid color-mix(in srgb, var(--warn) 28%, transparent);
+  background: var(--warn-soft);
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+
+.inline-note-ok {
+  border-color: color-mix(in srgb, var(--ok) 28%, transparent);
+  background: var(--ok-soft);
+}
+
+.inline-note-quiet {
+  border-color: var(--line);
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.pill-live {
+  background: var(--live-soft);
+  color: var(--live);
+  border-color: color-mix(in srgb, var(--live) 26%, transparent);
+}
+
+.pill-brand {
+  background: var(--brand-soft);
+  color: var(--brand);
+  border-color: color-mix(in srgb, var(--brand) 26%, transparent);
+}
+
+.pill-lg {
+  padding: 6px 15px;
+  font-size: 13.5px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

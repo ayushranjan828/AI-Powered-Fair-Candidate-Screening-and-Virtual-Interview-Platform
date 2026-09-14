@@ -49,31 +49,43 @@ async def _warn_legacy_data() -> None:
 
 
 # ------------------------------------------------------------------ static UI
+_NO_BUILD = (
+    "The React UI has not been built. Run `python run.py` (it builds "
+    "automatically), or `npm install && npm run build` in frontend/."
+)
+
+
 @app.middleware("http")
 async def _no_cache_frontend(request: Request, call_next):
-    """Never let a browser cache the UI.
+    """Never let a browser cache an HTML entry point.
 
-    Without this you get the worst kind of stale: a cached app.js paired with
-    freshly-loaded HTML, so new buttons render but their handlers are missing
-    and clicks silently do nothing.
+    Without this you get the worst kind of stale: a cached page paired with a
+    fresh bundle, so new buttons render but their handlers are missing and
+    clicks silently do nothing.
+
+    Vite's own asset filenames carry a content hash, so those are safe - and
+    worth caching hard, since three.js and the avatar rigs are far larger than
+    anything the old hand-written UI loaded.
     """
     response = await call_next(request)
     path = request.url.path
-    if path.startswith("/static/") or path.startswith("/i/") or path == "/":
+    if path.startswith("/static/assets/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif path.startswith("/static/") or path.startswith("/i/") or path == "/":
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         response.headers["Pragma"] = "no-cache"
     return response
 
 
-if config.FRONTEND_DIR.exists():
-    app.mount("/static", StaticFiles(directory=config.FRONTEND_DIR), name="static")
+if config.frontend_dir().exists():
+    app.mount("/static", StaticFiles(directory=config.frontend_dir()), name="static")
 
 
 @app.get("/")
 async def index():
-    page = config.FRONTEND_DIR / "index.html"
+    page = config.frontend_dir() / "index.html"
     if not page.exists():
-        raise HTTPException(500, "frontend/index.html is missing")
+        raise HTTPException(500, _NO_BUILD)
     return FileResponse(page)
 
 
@@ -85,9 +97,9 @@ async def invite_page(token: str):
     console on purpose - it has no setup, no history, no other candidates and no
     scores anywhere in it. The token stays in the URL for the page to read.
     """
-    page = config.FRONTEND_DIR / "candidate.html"
+    page = config.frontend_dir() / "candidate.html"
     if not page.exists():
-        raise HTTPException(500, "frontend/candidate.html is missing")
+        raise HTTPException(500, _NO_BUILD)
     return FileResponse(page)
 
 

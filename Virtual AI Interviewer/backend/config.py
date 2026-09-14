@@ -27,7 +27,27 @@ if ENV_FILE:
 
 DATA_DIR = BASE_DIR / "data"
 INTERVIEWS_DIR = DATA_DIR / "interviews"
-FRONTEND_DIR = BASE_DIR / "frontend"
+# The UI is a React app built by Vite into frontend/dist, and that build is what
+# gets served: its two pages reference hashed asset URLs under /static/, so
+# pointing at the source tree would serve HTML whose bundle does not exist yet.
+# run.py builds it before the server starts.
+FRONTEND_SRC_DIR = BASE_DIR / "frontend"
+FRONTEND_DIST_DIR = FRONTEND_SRC_DIR / "dist"
+
+
+def frontend_dir() -> Path:
+    """Where the servable UI lives right now.
+
+    Resolved on each call rather than pinned at import time, so a build that
+    finishes after this module loaded (uvicorn --reload, or a manual
+    `npm run build` in another terminal) is picked up without a restart.
+    """
+    if (FRONTEND_DIST_DIR / "index.html").is_file():
+        return FRONTEND_DIST_DIR
+    return FRONTEND_SRC_DIR
+
+
+FRONTEND_DIR = frontend_dir()
 
 for _d in (DATA_DIR, INTERVIEWS_DIR):
     _d.mkdir(parents=True, exist_ok=True)

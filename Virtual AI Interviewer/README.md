@@ -4,7 +4,7 @@ Shortlisted candidate in → questions written from **their** resume and **this*
 
 The companion to [Candidate screening](../Candidate%20screening/README.md). The screening stage judges a resume; this stage judges the person, and the two scores are deliberately shown side by side.
 
-Stack: **HTML / CSS / JS** front end (no framework, no build step), **Python + FastAPI** back end, **JSON** file storage, **Azure OpenAI** via `.env`, **Web Speech API** for voice.
+Stack: **React (Vite)** front end, **Python + FastAPI** back end, **JSON** file storage, **Azure OpenAI** via `.env`, **Web Speech API** for voice, **three.js** for the 3D interviewer.
 
 ---
 
@@ -36,7 +36,38 @@ cd "Virtual AI Interviewer"
 ..\myenv\Scripts\python.exe run.py
 ```
 
-Open <http://127.0.0.1:8010>. Click the **AI** pill in the header for a live connectivity check.
+Open <http://127.0.0.1:8010>. Click the **AI** pill at the foot of the sidebar for a live
+connectivity check.
+
+### The front end
+
+The UI is a React app in [frontend/](frontend/), built by Vite as **two pages** — the recruiter
+console (`index.html`) and the candidate's own interview (`candidate.html`). They are separate
+entry points on purpose: the candidate page must not be able to reach recruiter-only views, and
+separate bundles enforce that rather than leaving it to a route guard.
+
+**You do not need to run anything separately.** `run.py` checks whether `frontend/dist` is older
+than the sources and, if so, runs `npm install` (first time only) and `npm run build` before
+starting the server. FastAPI then serves `frontend/dist` at `/static`, its `index.html` at `/`,
+and its `candidate.html` at `/i/<token>`.
+
+Node.js is therefore required to build the UI. If `npm` is missing, `run.py` serves the existing
+build and warns; with no build at all it stops and says so.
+
+The avatar rigs, `speech.js` and `three.js` are **not** bundled — they are classic scripts that
+attach to `window`, kept verbatim in [frontend/public/](frontend/public/) and loaded before the
+React bundle. They are pure DOM/WebGL/Web-Speech code with no React in them, and rewriting working
+rigs to gain nothing would have been the wrong trade. React reaches them through
+[src/lib/legacy.js](frontend/src/lib/legacy.js), which looks `window.Avatar` up on **every** call —
+`avatar3d.js` swaps the 2D rig back in if the WebGL context is lost, and a captured reference
+would keep driving a rig that is no longer on screen.
+
+For front-end work with hot reload:
+
+```powershell
+..\myenv\Scripts\python.exe run.py   # terminal 1 - API on 8010
+cd frontend; npm run dev              # terminal 2 - UI on 5174, proxies /api and /i to 8010
+```
 
 **Use Chrome or Edge.** Both halves of the voice interface are browser APIs: `speechSynthesis` for the interviewer's voice and `SpeechRecognition` for the candidate's answers. Both degrade rather than break — see [Voice](#voice).
 
@@ -286,7 +317,7 @@ A candidate never touches the recruiter console. The invitation email from the s
 http://<host>/i/<token>
 ```
 
-which opens a **separate page** ([candidate.html](frontend/candidate.html) / [candidate.js](frontend/candidate.js)) with no tabs, no setup, no history, no other candidates and no scores anywhere in it. It shows the interviewer, explains what to expect, checks the browser, and starts the interview on one click.
+which opens a **separate page** ([candidate.html](frontend/candidate.html) / [CandidateApp.jsx](frontend/src/CandidateApp.jsx)) with no tabs, no setup, no history, no other candidates and no scores anywhere in it. It shows the interviewer, explains what to expect, checks the browser, and starts the interview on one click.
 
 - **`GET /i/{token}`** serves the candidate page.
 - **`GET /api/invite/{token}`** returns only what the landing screen needs: a first name, the role, the interviewer, and whether this is a new, resumable or already-completed interview.
@@ -309,7 +340,7 @@ When the interview ends, the candidate sees a thank-you. The evaluation runs for
 
 ## The 2D interviewer
 
-[avatar.js](frontend/avatar.js) is an SVG rig driven by one `requestAnimationFrame` loop. It is not a video, a GIF or a sprite sheet — every part is a shape whose numbers are recomputed each frame, which is what lets the mouth follow real speech instead of looping a canned animation.
+[avatar.js](frontend/public/avatar.js) is an SVG rig driven by one `requestAnimationFrame` loop. It is not a video, a GIF or a sprite sheet — every part is a shape whose numbers are recomputed each frame, which is what lets the mouth follow real speech instead of looping a canned animation.
 
 **Eyes.** Sclera, iris that tracks a gaze target, pupil, catch-light, and an eyelid that scales down from the top to blink. Blinks fire at randomised intervals and cluster into occasional double-blinks, because a fixed interval reads as a metronome. Gaze makes small saccades, looks away while thinking, and drops to the notepad while taking notes.
 
@@ -323,7 +354,7 @@ Everything eases toward a target rather than being set directly, so state change
 
 ### How the mouth stays in time
 
-[speech.js](frontend/speech.js) builds a viseme timeline from the same text the synthesiser is given: graphemes are mapped to visemes (two-letter clusters first, so `sh` is not read as `s` + `h`), vowels get longer durations than consonants, punctuation becomes a pause, and the whole thing is scaled by the speaking rate. At rate 1.0 this lands on **140 wpm**, inside the natural range.
+[speech.js](frontend/public/speech.js) builds a viseme timeline from the same text the synthesiser is given: graphemes are mapped to visemes (two-letter clusters first, so `sh` is not read as `s` + `h`), vowels get longer durations than consonants, punctuation becomes a pause, and the whole thing is scaled by the speaking rate. At rate 1.0 this lands on **140 wpm**, inside the natural range.
 
 There is no way to read the synthesiser's audio from a page, so the timeline drives the mouth — but `onboundary` events snap the playhead to the word actually being spoken, so drift never accumulates over a long question. On voices that fire no boundary events, the estimate carries the whole utterance.
 
@@ -416,10 +447,14 @@ The microphone is used only for in-browser transcription. No audio is uploaded, 
 | [backend/storage.py](backend/storage.py) | Atomic JSON persistence (`data/interviews`, `data/invites.json`, `data/candidate_options.json`) |
 | [backend/excel_export.py](backend/excel_export.py) | `.xlsx` — report, parameters, transcript |
 | [backend/dnsfix.py](backend/dnsfix.py) | DNS fallback for blocked `getaddrinfo` (see Notes) |
-| [frontend/avatar.js](frontend/avatar.js) | The 2D rig |
-| [frontend/speech.js](frontend/speech.js) | TTS + viseme timeline, STT, mic meter |
-| [frontend/app.js](frontend/app.js) | Recruiter console controller and the interview loop |
-| [frontend/candidate.html](frontend/candidate.html) · [candidate.js](frontend/candidate.js) | The candidate's page, reached from their emailed link |
+| [frontend/public/avatar.js](frontend/public/avatar.js) | The 2D SVG rig (unbundled, `window.Avatar`) |
+| [frontend/public/avatar3d.js](frontend/public/avatar3d.js) | The 3D rig, which supersedes the 2D one where WebGL works |
+| [frontend/public/speech.js](frontend/public/speech.js) | TTS + viseme timeline, STT, mic meter (`window.Speech`) |
+| [frontend/src/hooks/useInterviewRun.js](frontend/src/hooks/useInterviewRun.js) | The interview turn loop — shared by both pages, prompts and answers only |
+| [frontend/src/App.jsx](frontend/src/App.jsx) | Recruiter console: tabs, dashboard, stage, report, history |
+| [frontend/src/CandidateApp.jsx](frontend/src/CandidateApp.jsx) | The candidate's page, reached from their emailed link |
+| [frontend/src/lib/legacy.js](frontend/src/lib/legacy.js) | Bridge from React to the unbundled `window.Avatar` / `window.Speech` |
+| [frontend/src/components/](frontend/src/components/) | One component per tab, plus drawers, modal, toast and stage pieces |
 
 ## API
 
