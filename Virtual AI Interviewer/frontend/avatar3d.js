@@ -51,7 +51,7 @@ window.Avatar3D = (function () {
     suitDark:  0x2b2f35,
     shirt:     0xd5d9dc,
     tie:       0x2a2f35,
-    lip:       0x74615b,
+    lip:       0x5b4a44,
     mouth:     0x24100f,
     tongue:    0x8f5555,
     tooth:     0xdcd6c8,
@@ -328,50 +328,70 @@ window.Avatar3D = (function () {
     return t * t * (3 - 2 * t);
   }
 
-  /** Radius and skin-vs-fur mix for a direction on the unit sphere. */
+  /** A bump stretched sideways: xs < 1 widens it across the face, which is how
+   *  a brow becomes one bar instead of two knuckles. */
+  function bumpWide(x, y, z, cx, cy, cz, w, xs) {
+    const sx = x * xs, len = Math.sqrt(sx * sx + y * y + z * z);
+    return bump(sx / len, y / len, z / len, cx, cy, cz, w);
+  }
+
+  /** Radius, skin-vs-fur mix and skin shading for a direction on the unit
+   *  sphere. What makes this read as a monkey rather than a bald man is the
+   *  layout, not the fur: a snout that carries the nose and mouth forward, one
+   *  heavy brow bar over close-set sunken eyes, almost no forehead before the
+   *  hairline, and no chin to speak of. */
   function headShape(x, y, z) {
-    const muzzle = bump(x, y, z, 0, -0.40, 0.92, 0.42);
-    const brow = bump(x, y, z, -0.32, 0.33, 0.89, 0.26) + bump(x, y, z, 0.32, 0.33, 0.89, 0.26);
-    const socket = bump(x, y, z, -0.34, 0.13, 0.93, 0.17) + bump(x, y, z, 0.34, 0.13, 0.93, 0.17);
-    const cheek = bump(x, y, z, -0.62, -0.30, 0.72, 0.38) + bump(x, y, z, 0.62, -0.30, 0.72, 0.38);
-    const chin = bump(x, y, z, 0, -0.80, 0.58, 0.30);
-    const crown = bump(x, y, z, 0, 1, 0.05, 0.45);
+    const muzzle = bump(x, y, z, 0, -0.30, 0.95, 0.46);
+    const snoutTip = bump(x, y, z, 0, -0.30, 0.95, 0.24);
+    const nose = bump(x, y, z, 0, -0.24, 0.97, 0.14);
+    const brow = bumpWide(x, y, z, 0, 0.30, 0.95, 0.30, 0.55);
+    const socket = bump(x, y, z, -0.27, 0.15, 0.95, 0.19) + bump(x, y, z, 0.27, 0.15, 0.95, 0.19);
+    const forehead = bumpWide(x, y, z, 0, 0.66, 0.75, 0.34, 0.7);
+    const cheek = bump(x, y, z, -0.60, -0.32, 0.72, 0.38) + bump(x, y, z, 0.60, -0.32, 0.72, 0.38);
+    const crown = bump(x, y, z, 0, 1, 0.05, 0.48);
     const nape = bump(x, y, z, 0, -0.55, -0.82, 0.45);
+    const jawline = bumpWide(x, y, z, 0, -0.92, 0.35, 0.30, 0.6);
 
     let r = 1;
-    r += muzzle * 0.330;          // the snout, which a sphere alone never has
-    r += brow * 0.055;            // heavy ridge over each eye
-    r -= socket * 0.055;          // eyes sit in a hollow, not on the surface
-    r += cheek * 0.048;
-    r += chin * 0.030;
-    r -= crown * 0.055;           // the cranium is an egg, not a ball
+    r += muzzle * 0.20;           // the snout: some radial mass, but mostly a
+    const fwd = muzzle * 0.26;    // straight forward push, applied in headPoint
+    r += snoutTip * 0.10;         // rounded off at the end rather than a cone
+    r += nose * 0.030;            // a flat nose pad, no bridge
+    r += brow * 0.105;            // one bony bar over both eyes
+    r -= socket * 0.080;          // eyes sunk deep under it
+    r -= forehead * 0.060;        // the forehead slopes straight back
+    r += cheek * 0.045;
+    r -= crown * 0.085;           // small cranium, big face
     r -= nape * 0.040;
+    r -= jawline * 0.020;         // a slight chin - the jaw recedes under the snout
 
-    // Bare skin over the brow, the eyes and the whole muzzle; fur everywhere
-    // else, with a soft border rather than a painted line.
-    // Bare skin is a band, not a cone: a radial patch cannot tell the brow
-    // from the forehead, and every version that used one ended up bald. The
-    // band runs from just above the eyes down to the jaw, closes in at the
-    // temples, and only applies to the front of the head - with the snout
-    // added separately so it stays bare all the way round its tip.
-    const band = sstep(-0.76, -0.50, y) * (1 - sstep(0.16, 0.44, y));
-    const sides = 1 - sstep(0.26, 0.56, Math.abs(x));
+    // Bare skin: a narrow oval from just over the brow down to the jaw, plus
+    // the whole snout. The hairline comes lowest in the middle - the widow's
+    // peak every macaque has - and the coat closes in under the jaw.
+    const peak = 0.20 + 0.16 * Math.abs(x);
+    const band = sstep(-0.74, -0.50, y) * (1 - sstep(peak, peak + 0.13, y));
+    const sides = 1 - sstep(0.23, 0.50, Math.abs(x));
     const front = sstep(0.40, 0.66, z);
-    const snout = bump(x, y, z, 0, -0.42, 0.90, 0.34);
+    const snout = bump(x, y, z, 0, -0.34, 0.94, 0.40);
     const skin = Math.min(1, band * sides * front * 1.30 + snout * 1.15);
-    return { r: r, skin: skin };
+
+    // Skin is not one colour either: darker in the eye pits, paler on the
+    // snout. Returned as a multiplier and a lighten amount for the shader.
+    const eyeRing = bump(x, y, z, -0.27, 0.15, 0.95, 0.33) + bump(x, y, z, 0.27, 0.15, 0.95, 0.33);
+    return { r: r, fwd: fwd, skin: skin, dark: Math.min(1, eyeRing) * 0.58, pale: muzzle * 0.42 };
   }
 
   /** Where a direction lands on the finished head, in head-local space. */
-  const HEAD_SCALE = { x: 0.455, y: 0.505, z: 0.485 };
+  const HEAD_SCALE = { x: 0.428, y: 0.520, z: 0.500 };
   function headPoint(x, y, z, out) {
     const len = Math.sqrt(x * x + y * y + z * z);
     x /= len; y /= len; z /= len;
-    const r = headShape(x, y, z).r;
+    const shape = headShape(x, y, z);
+    const r = shape.r;
     out = out || {};
     out.x = x * r * HEAD_SCALE.x;
     out.y = y * r * HEAD_SCALE.y;
-    out.z = z * r * HEAD_SCALE.z;
+    out.z = (z * r + shape.fwd) * HEAD_SCALE.z;
     return out;
   }
 
@@ -392,9 +412,10 @@ window.Avatar3D = (function () {
       // stops a single flat brown from reading as paint.
       const shade = 0.78 + 0.28 * (1 - Math.max(0, y));
       const t = shape.skin;
-      colors[i * 3] = fur.r * shade * (1 - t) + skin.r * t;
-      colors[i * 3 + 1] = fur.g * shade * (1 - t) + skin.g * t;
-      colors[i * 3 + 2] = fur.b * shade * (1 - t) + skin.b * t;
+      const tone = (1 - shape.dark) * (1 + shape.pale);
+      colors[i * 3] = fur.r * shade * (1 - t) + (skin.r * tone + shape.pale * 0.05) * t;
+      colors[i * 3 + 1] = fur.g * shade * (1 - t) + skin.g * tone * t;
+      colors[i * 3 + 2] = fur.b * shade * (1 - t) + (skin.b * tone - shape.pale * 0.02) * t;
     }
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
@@ -565,7 +586,7 @@ window.Avatar3D = (function () {
     // Brow hair: sparse, lying along the ridge rather than painted on as bars.
     R.brow = [-1, 1].map((side) => {
       const g = group(head, 0, 0, 0);
-      const seat = on(side * 0.33, 0.36, 0.87, {}, -0.005);
+      const seat = on(side * 0.28, 0.31, 0.90, {}, -0.004);
       g.position.set(seat[0], seat[1], seat[2]);
       const hair = add(g, new THREE.CapsuleGeometry(0.017, 0.105, 5, 12), M.furDark);
       hair.rotation.set(0.34, side * -0.18, HALF_PI + side * 0.22);
@@ -576,14 +597,14 @@ window.Avatar3D = (function () {
 
     // Nostrils, set into the end of the snout.
     for (const side of [-1, 1]) {
-      const nostril = add(head, new THREE.SphereGeometry(0.021, 14, 12), M.mouth,
-        on(side * 0.115, -0.26, 0.96, {}, -0.006), [0.9, 0.6, 0.8]);
+      const nostril = add(head, new THREE.SphereGeometry(0.029, 14, 12), M.mouth,
+        on(side * 0.15, -0.28, 0.95, {}, 0.004), [1.0, 0.68, 0.8]);
       nostril.rotation.z = side * 0.55;
     }
     // Cheeks ride up on a smile; they sit just proud of the sculpted cheek.
     R.cheek = [-1, 1].map((side) => {
       const c = add(head, new THREE.SphereGeometry(0.085, 20, 16), M.face,
-        on(side * 0.50, -0.30, 0.80, {}, -0.062), [1, 0.85, 0.5]);
+        on(side * 0.50, -0.30, 0.80, {}, -0.095), [1, 0.85, 0.5]);
       c.userData.base = c.position.y;
       return c;
     });
@@ -594,7 +615,7 @@ window.Avatar3D = (function () {
      * of why the reference reads as a monkey at a glance.
      */
     R.ear = [-1, 1].map((side) => {
-      const seat = on(side * 0.99, 0.02, 0.04, {}, -0.015);
+      const seat = on(side * 0.99, 0.06, 0.02, {}, -0.015);
       const g = group(head, seat[0], seat[1], seat[2]);
       g.rotation.set(0.05, -side * 0.70, side * 0.14);
       add(g, new THREE.SphereGeometry(0.200, 26, 20), M.skin, [0, 0, 0], [0.13, 1, 0.92]);
@@ -615,7 +636,7 @@ window.Avatar3D = (function () {
      * ball (a naturally lidded eye) and tipping it forward is a blink.
      */
     R.eye = [-1, 1].map((side) => {
-      const seat = on(side * 0.34, 0.13, 0.93, {}, -0.040);
+      const seat = on(side * 0.27, 0.15, 0.95, {}, -0.058);
       const socket = group(head, seat[0], seat[1], seat[2]);
       const e = {};
       e.ball = group(socket, 0, 0, 0);
@@ -635,25 +656,29 @@ window.Avatar3D = (function () {
      * Upper lip, cavity and teeth belong to the head; the lower lip, tongue and
      * chin belong to the jaw, which hinges about a pivot behind the muzzle.
      */
-    const lipSeat = on(0, -0.52, 0.85, {}, 0.004);
+    const lipSeat = on(0, -0.43, 0.90, {}, 0.005);
     const mouth = group(head, lipSeat[0], lipSeat[1], lipSeat[2]);
     R.mouth = mouth;
-    R.cavity = add(mouth, new THREE.SphereGeometry(0.105, 20, 16), M.mouth, [0, 0, -0.03], [1, 0.10, 0.3]);
+    R.cavity = add(mouth, new THREE.SphereGeometry(0.128, 20, 16), M.mouth, [0, 0, -0.03], [1, 0.10, 0.3]);
 
-    R.upperLip = add(mouth, new THREE.TorusGeometry(0.105, 0.015, 8, 26, Math.PI), M.lip);
+    R.upperLip = add(mouth, new THREE.TorusGeometry(0.128, 0.011, 8, 28, Math.PI), M.lip);
     R.upperLip.scale.set(1, LIP_FLAT, 1);
-    R.teeth = add(mouth, new THREE.BoxGeometry(0.14, 0.022, 0.03), M.tooth, [0, 0.008, 0.012]);
+    R.teeth = add(mouth, new THREE.BoxGeometry(0.17, 0.022, 0.03), M.tooth, [0, 0.008, 0.012]);
 
-    const jaw = group(head, 0, -0.16, 0.06);
+    // The hinge sits just behind and below the mouth, so a wide-open jaw drops
+    // the lip a little rather than swinging it off the face.
+    const jawY = -0.27, jawZ = 0.24;
+    const jaw = group(head, 0, jawY, jawZ);
     R.jaw = jaw;
-    const lowerLip = add(jaw, new THREE.TorusGeometry(0.105, 0.016, 8, 26, Math.PI), M.lip,
-      [lipSeat[0], lipSeat[1] + 0.16, lipSeat[2] - 0.06]);
+    const lipY = lipSeat[1] - jawY, lipZ = lipSeat[2] - jawZ;
+    const lowerLip = add(jaw, new THREE.TorusGeometry(0.128, 0.012, 8, 28, Math.PI), M.lip,
+      [0, lipY, lipZ]);
     lowerLip.rotation.z = Math.PI;
     R.lowerLip = lowerLip;
-    R.lowerLip.userData.base = [lipSeat[1] + 0.16, lipSeat[2] - 0.06];
+    R.lowerLip.userData.base = [lipY, lipZ];
     R.tongue = add(jaw, new THREE.SphereGeometry(0.055, 16, 12), M.tongue,
-      [0, lipSeat[1] + 0.175, lipSeat[2] - 0.10], [1, 0.42, 0.9]);
-    R.tongue.userData.baseZ = lipSeat[2] - 0.10;
+      [0, lipY + 0.012, lipZ - 0.04], [1, 0.42, 0.9]);
+    R.tongue.userData.baseZ = lipZ - 0.04;
 
     return R;
   }
@@ -912,20 +937,24 @@ window.Avatar3D = (function () {
       c[key] = ease(c[key], S.speaking ? g[key] : (key === "open" ? 0.04 : 0), 0.30, dt);
     }
     const open = clamp(c.open, 0, 1);
-    R.jaw.rotation.x = open * 0.40 + c.smile * 0.01;
+    R.jaw.rotation.x = open * 0.24 + c.smile * 0.01;
 
     // A wide shape stretches the lips and flattens them; a round one pulls them
     // in and pushes them forward, the way a real pucker works.
     const lipW = (1 + c.wide * 0.32) * (1 - c.round * 0.40);
-    const lipH = (1 - c.wide * 0.22) * (1 + c.round * 0.35);
+    const lipH = (1 - c.wide * 0.22) * (1 + c.round * 0.12);
     const push = c.round * 0.055;
     R.upperLip.scale.set(lipW, LIP_FLAT * lipH * (1 + open * 0.30), 1 + c.round * 0.5);
     R.upperLip.position.set(0, c.smile * 0.012, push);
-    R.lowerLip.scale.set(lipW, LIP_FLAT * lipH * (1 + open * 0.45), 1 + c.round * 0.5);
+    R.lowerLip.scale.set(lipW, LIP_FLAT * lipH * (1 + open * 0.12), 1 + c.round * 0.5);
     R.lowerLip.position.set(0, R.lowerLip.userData.base[0] - c.bite * 0.012,
                         R.lowerLip.userData.base[1] + push);
     R.mouth.scale.set(1, 1 + open * 0.20, 1);
-    R.cavity.scale.set(1.1 + c.wide * 0.22, 0.10 + open * 0.80, 0.30);
+    // The cavity has to grow DOWN to meet the lower lip on the hinged jaw;
+    // grown from the centre it leaves a strip of still skin between the two
+    // and the lip reads as a ring floating under the mouth.
+    R.cavity.scale.set(1.1 + c.wide * 0.22 - c.round * 0.38, 0.10 + open * 0.90, 0.30);
+    R.cavity.position.y = -open * 0.052;
 
     // Cheeks full on a smile - the part people actually read.
     for (const cheek of R.cheek) {
