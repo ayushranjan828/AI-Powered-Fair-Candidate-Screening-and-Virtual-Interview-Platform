@@ -87,7 +87,13 @@ def list_interviews(limit: int = 200) -> list[dict]:
                 "status": data.get("status"),
                 "created_at": data.get("created_at"),
                 "completed_at": data.get("completed_at"),
-                "turns": len([t for t in data.get("turns", []) if t.get("answer")]),
+                # Answers, not utterances: a turn where they said they did not
+                # know is not one of the questions this interview answered.
+                "turns": len([t for t in data.get("turns", [])
+                              if (t.get("answer") or "").strip()
+                              and ((t.get("assessment") or {}).get("answer_type") or "")
+                              != "no_answer"]),
+                "ended_early": bool(data.get("ended_early")),
                 "planned_total": len((data.get("plan") or {}).get("questions", [])),
                 "overall_score": report.get("overall_score"),
                 "verdict": report.get("verdict"),

@@ -4,7 +4,7 @@ Shortlisted candidate in → questions written from **their** resume and **this*
 
 The companion to [Candidate screening](../Candidate%20screening/README.md). The screening stage judges a resume; this stage judges the person, and the two scores are deliberately shown side by side.
 
-Stack: **HTML / CSS / JS** front end (no framework, no build step), **Python + FastAPI** back end, **JSON** file storage, **Azure OpenAI** via `.env`, **Web Speech API** for voice.
+Stack: **React (Vite)** front end, **Python + FastAPI** back end, **JSON** file storage, **Azure OpenAI** via `.env`, **Web Speech API** for voice, **three.js** for the 3D interviewer.
 
 ---
 
@@ -36,9 +36,50 @@ cd "Virtual AI Interviewer"
 ..\myenv\Scripts\python.exe run.py
 ```
 
-Open <http://127.0.0.1:8010>. Click the **AI** pill in the header for a live connectivity check.
+Open <http://127.0.0.1:8010>. Click the **AI** pill at the foot of the sidebar for a live
+connectivity check.
 
-**Use Chrome or Edge.** Both halves of the voice interface are browser APIs: `speechSynthesis` for the interviewer's voice and `SpeechRecognition` for the candidate's answers. Both degrade rather than break — see [Voice](#voice).
+The rules that must behave identically for every candidate have unit tests, and none of
+them touch the network:
+
+```powershell
+cd "Virtual AI Interviewer"
+..\myenv\Scripts\python.exe tests\test_core.py    # or: python -m pytest tests -q
+```
+
+### The front end
+
+The UI is a React app in [frontend/](frontend/), built by Vite as **two pages** — the recruiter
+console (`index.html`) and the candidate's own interview (`candidate.html`). They are separate
+entry points on purpose: the candidate page must not be able to reach recruiter-only views, and
+separate bundles enforce that rather than leaving it to a route guard.
+
+**You do not need to run anything separately.** `run.py` checks whether `frontend/dist` is older
+than the sources and, if so, runs `npm install` (first time only) and `npm run build` before
+starting the server. FastAPI then serves `frontend/dist` at `/static`, its `index.html` at `/`,
+and its `candidate.html` at `/i/<token>`.
+
+Node.js is therefore required to build the UI. If `npm` is missing, `run.py` serves the existing
+build and warns; with no build at all it stops and says so.
+
+The avatar rigs, `speech.js` and `three.js` are **not** bundled — they are classic scripts that
+attach to `window`, kept verbatim in [frontend/public/](frontend/public/) and loaded before the
+React bundle. They are pure DOM/WebGL/Web-Speech code with no React in them, and rewriting working
+rigs to gain nothing would have been the wrong trade. React reaches them through
+[src/lib/legacy.js](frontend/src/lib/legacy.js), which looks `window.Avatar` up on **every** call —
+`avatar3d.js` swaps the 2D rig back in if the WebGL context is lost, and a captured reference
+would keep driving a rig that is no longer on screen.
+
+For front-end work with hot reload:
+
+```powershell
+..\myenv\Scripts\python.exe run.py   # terminal 1 - API on 8010
+cd frontend; npm run dev              # terminal 2 - UI on 5174, proxies /api and /i to 8010
+```
+
+**Use Chrome or Edge.** Both halves of the voice interface are browser APIs: `speechSynthesis` for the interviewer's voice and `SpeechRecognition` for the candidate's answers. The interviewer's voice degrades rather than breaks; the candidate's microphone is
+required, and is said to be required up front — see
+[The interview itself](#the-interview-itself).
 
 ---
 
@@ -46,7 +87,7 @@ Open <http://127.0.0.1:8010>. Click the **AI** pill in the header for a live con
 
 **1 · Dashboard** — pick an accepted screening shortlist and every candidate on it appears as a row: their resume score, where they have got to, whether their invitation has been sent, their interview score, and every action you can take on them. This is where the recruiter drives everything — see [The recruiter dashboard](#the-recruiter-dashboard).
 
-**2 · Interview** — the 2D interviewer greets the candidate by name, then works through the plan. Each question is spoken aloud with a live caption; the candidate answers by voice (transcribed in the browser) or by typing. Between questions the interviewer acknowledges the answer and either moves on or follows up on it. **Repeat question**, **Mute voice** and **Skip** are always available.
+**2 · Interview** — the interviewer greets the candidate by name, then works through the plan. Each question is spoken aloud with a live caption; the candidate answers **out loud and only out loud**, transcribed in the browser. Between questions the interviewer acknowledges the answer and either moves on or follows up on it. See [The interview itself](#the-interview-itself).
 
 **3 · Report** — opens on **Candidate reports**: every candidate on a shortlist, split by whether they actually sat the interview, filterable by attendance and by decision, and exportable as one Excel report. Open a row for the full individual write-up — overall score, verdict, per-parameter breakdown with the reasoning behind each number, strengths, gaps, standout moments, what the interview failed to cover, risk flags, a recommended next step, and the transcript with the grade given to every single answer. A human records the actual decision at the bottom. See [Candidate reports](#candidate-reports).
 
@@ -232,9 +273,11 @@ and the exported report can never disagree:
 | `No · never started` | Invited or prepared, never answered a question |
 | `No · not invited` | Nothing exists for them at all |
 
-A **completed** interview counts as attended even if every question was skipped:
+A **completed** interview counts as attended even if every question went unanswered:
 they turned up, and "answered nothing" is a finding for the reviewer rather than an
-absence.
+absence. An interview that was **ended early** is marked as such everywhere it is
+counted — the row, the report and the export — because a partial interview read as a
+finished one is a misread of the person, not just of the number.
 
 ### Filters
 
@@ -286,10 +329,10 @@ A candidate never touches the recruiter console. The invitation email from the s
 http://<host>/i/<token>
 ```
 
-which opens a **separate page** ([candidate.html](frontend/candidate.html) / [candidate.js](frontend/candidate.js)) with no tabs, no setup, no history, no other candidates and no scores anywhere in it. It shows the interviewer, explains what to expect, checks the browser, and starts the interview on one click.
+which opens a **separate page** ([candidate.html](frontend/candidate.html) / [CandidateApp.jsx](frontend/src/CandidateApp.jsx)) with no tabs, no setup, no history, no other candidates and no scores anywhere in it. It shows the interviewer, explains what to expect, checks the browser, and starts the interview on one click.
 
 - **`GET /i/{token}`** serves the candidate page.
-- **`GET /api/invite/{token}`** returns only what the landing screen needs: a first name, the role, the interviewer, and whether this is a new, resumable or already-completed interview.
+- **`GET /api/invite/{token}`** returns only what the landing screen needs: a first name, the role, the interviewer, the time limit if there is one, and whether this is a new, resumable or already-completed interview.
 - **`POST /api/invite/{token}/start`** creates the interview, or returns the existing one. It is **idempotent**: clicking the link twice, or reloading mid-interview, resumes rather than producing a second interview for the same person. A completed interview returns `409` — the link cannot be used to take it again.
 
 The token is verified by [interview_link.py](backend/interview_link.py) — **duplicated from the screening app, and the two copies must stay identical**. A tampered, truncated or unknown token gets a plain `404` with no hint as to which part was wrong; an expired one gets `410` and a message telling the candidate to ask for a new link.
@@ -303,13 +346,13 @@ The candidate's browser only ever reads the candidate-safe interview view, and t
 
 The token itself is not stored — only a fingerprint of it, so a record can be tied back to a link without the link lying around in a JSON file.
 
-When the interview ends, the candidate sees a thank-you. The evaluation runs for the recruiter; the candidate is never shown a score, a verdict or any part of the report.
+When the interview ends — by reaching the last question, by the **End interview** button, or by asking to stop out loud — the microphone is released and the candidate sees a thank-you. The evaluation runs for the recruiter; the candidate is never shown a score, a verdict or any part of the report.
 
 ---
 
 ## The 2D interviewer
 
-[avatar.js](frontend/avatar.js) is an SVG rig driven by one `requestAnimationFrame` loop. It is not a video, a GIF or a sprite sheet — every part is a shape whose numbers are recomputed each frame, which is what lets the mouth follow real speech instead of looping a canned animation.
+[avatar.js](frontend/public/avatar.js) is an SVG rig driven by one `requestAnimationFrame` loop. It is not a video, a GIF or a sprite sheet — every part is a shape whose numbers are recomputed each frame, which is what lets the mouth follow real speech instead of looping a canned animation.
 
 **Eyes.** Sclera, iris that tracks a gaze target, pupil, catch-light, and an eyelid that scales down from the top to blink. Blinks fire at randomised intervals and cluster into occasional double-blinks, because a fixed interval reads as a metronome. Gaze makes small saccades, looks away while thinking, and drops to the notepad while taking notes.
 
@@ -323,7 +366,7 @@ Everything eases toward a target rather than being set directly, so state change
 
 ### How the mouth stays in time
 
-[speech.js](frontend/speech.js) builds a viseme timeline from the same text the synthesiser is given: graphemes are mapped to visemes (two-letter clusters first, so `sh` is not read as `s` + `h`), vowels get longer durations than consonants, punctuation becomes a pause, and the whole thing is scaled by the speaking rate. At rate 1.0 this lands on **140 wpm**, inside the natural range.
+[speech.js](frontend/public/speech.js) builds a viseme timeline from the same text the synthesiser is given: graphemes are mapped to visemes (two-letter clusters first, so `sh` is not read as `s` + `h`), vowels get longer durations than consonants, punctuation becomes a pause, and the whole thing is scaled by the speaking rate. At rate 1.0 this lands on **140 wpm**, inside the natural range.
 
 There is no way to read the synthesiser's audio from a page, so the timeline drives the mouth — but `onboundary` events snap the playhead to the word actually being spoken, so drift never accumulates over a long question. On voices that fire no boundary events, the estimate carries the whole utterance.
 
@@ -390,13 +433,94 @@ Report confidence starts from the model's own read and is only ever downgraded �
 
 ---
 
-## Voice
+## The interview itself
+
+What the candidate actually experiences, and why each part is the way it is.
+
+### Spoken, with nothing to type
+
+There is no answer box. A box to type into is a box to paste into, and an interview you
+can paste into measures the paste. The microphone is asked for **once**, in the click
+that begins the interview, held for the whole session — the browser's recording
+indicator stays on the way it does on a call — and released the moment the interview
+ends. There is no per-question record button to remember to press.
+
+The live transcript is shown as it is heard, read-only, so the candidate can see they
+are being understood.
+
+Because nothing is typed, a browser without `SpeechRecognition` cannot take the
+interview. That is said on the welcome screen, before anything is created, rather than
+discovered half way through.
+
+### Knowing when an answer has finished
+
+Nobody presses anything to say they are done, so the loop works it out:
+
+| Situation | What happens |
+|---|---|
+| Quiet for 5s, having said something | A visible 4-second countdown, cancelled by speaking again |
+| The countdown reaches zero | The answer is sent |
+| Nothing said at all for 40s | "Take your time. If you would like me to repeat the question, just say so." |
+| Still nothing at 100s | Recorded as unanswered, and the interview moves on |
+| They would rather not wait | **Done answering** sends it immediately |
+
+Silence is judged from the **transcript**, never from the microphone's level. A fan, a
+noisy line or an aggressive gain control holds the level meter permanently high, and an
+interview waiting on that waits for a silence that never arrives. It is also the safer
+signal: speech the recogniser cannot make out leaves the transcript empty, which lands
+on the "take your time" nudge rather than on an early submit, so failing to be
+understood never costs somebody their answer.
+
+### When what they said was not an answer
+
+Every utterance is read for intent before it is graded — deterministically, in
+[backend/intent.py](backend/intent.py), never by a model. The behaviour has to be
+identical for every candidate: the same words must end the interview for everybody, and
+an intent this consequential cannot depend on a call that can time out or drift.
+
+| They say | What happens |
+|---|---|
+| "sorry, could you repeat that" · "I didn't catch that" · "pardon" | The question is asked again. The turn stays open, nothing is recorded, and it costs nothing. After three, the interviewer says out loud that they may leave it |
+| "I don't know" · "I haven't used that" · "no idea" | Recorded honestly, **not scored and never followed up**, and the next question is swapped for one in a different category — an interviewer who hears "I have not used Kubernetes" does not ask about Kubernetes again |
+| "I want to stop" · "I don't want to give this interview" | The interviewer asks whether to end it. Saying yes ends it; **anything that is not a clear yes carries on**, because ending is the irreversible direction |
+| A real answer that happens to contain those words | Graded as the answer it is — "I'm not sure, but I would start by profiling the query" is somebody thinking aloud |
+
+Ending — by voice, or with the **End interview** button — keeps everything answered so
+far and sends it for review. It is not the same as **End & discard**, which is the
+recruiter's own lever and throws the interview away. An interview ended before a single
+question was answered is never reported as completed: an empty report in front of a
+recruiter reads as a judgement.
+
+### The clock, and not the question count
+
+The candidate sees elapsed time and never how many questions are left: knowing that two
+remain changes how people answer the second-to-last one. The recruiter's own stage shows
+both. The clock is anchored to the server's elapsed time and then run locally, so a
+throttled tab still shows the truth, and it runs on its own timer so it keeps ticking
+through the seconds an answer spends being graded.
+
+An optional **time limit** (per run or per candidate; 0 is none) never cuts anybody off
+mid-answer. Reaching it stops new questions being asked and goes to the closing one,
+said out loud — "we are coming up on time, so this will be my last question" — so every
+interview ends the same way it would have anyway. The candidate is told the limit before
+they begin.
+
+### What is recorded around the answers
+
+Leaving the page, losing the microphone, asking for repeats, long silences. All of it is
+shown to the reviewer under **How the session ran**, and **none of it touches a score**.
+Somebody who looked away may have answered their door; somebody who asked three times
+may have a noisy room, or may be listening carefully. A person can tell the difference
+and a number cannot.
+
+### Degrading
 
 | Missing capability | What happens |
 |---|---|
 | No `speechSynthesis` | Questions are mimed silently — the mouth still follows the text, so it stays watchable. Captions carry the question. |
-| No `SpeechRecognition` | The mic button disables itself and answers are typed. Everything else is unchanged. |
-| Mic permission denied | Reported once, then typing. The level meter stays quiet. |
+| No `SpeechRecognition` | The interview cannot run. Said on the welcome screen, with what to open instead. |
+| Mic permission denied | A named explanation and a **Try again** — never a half-started interview. |
+| Microphone lost mid-interview | Noticed within 5s, said plainly, and recorded. |
 | Voice drops an utterance | A watchdog sized from the timeline ends the turn rather than hanging. |
 
 The microphone is used only for in-browser transcription. No audio is uploaded, stored or sent anywhere — only the resulting text reaches the server.
@@ -408,7 +532,8 @@ The microphone is used only for in-browser transcription. No audio is uploaded, 
 | Path | Purpose |
 |---|---|
 | [backend/main.py](backend/main.py) | FastAPI routes |
-| [backend/interview.py](backend/interview.py) | The turn engine — what is said next, follow-up limits, finalisation |
+| [backend/interview.py](backend/interview.py) | The turn engine — what is said next, follow-up limits, the clock, finalisation |
+| [backend/intent.py](backend/intent.py) | What an utterance was: an answer, a request to repeat, a decline, a request to stop |
 | [backend/ai_agent.py](backend/ai_agent.py) | Azure OpenAI calls: plan, per-answer assess + follow-up, closing review, fallbacks |
 | [backend/evaluation.py](backend/evaluation.py) | Weighting, blending, overall score, verdict, confidence |
 | [backend/candidates.py](backend/candidates.py) | Reads accepted shortlists **and live sessions** from the screening app; candidate normalisation; invite resolution |
@@ -416,10 +541,14 @@ The microphone is used only for in-browser transcription. No audio is uploaded, 
 | [backend/storage.py](backend/storage.py) | Atomic JSON persistence (`data/interviews`, `data/invites.json`, `data/candidate_options.json`) |
 | [backend/excel_export.py](backend/excel_export.py) | `.xlsx` — report, parameters, transcript |
 | [backend/dnsfix.py](backend/dnsfix.py) | DNS fallback for blocked `getaddrinfo` (see Notes) |
-| [frontend/avatar.js](frontend/avatar.js) | The 2D rig |
-| [frontend/speech.js](frontend/speech.js) | TTS + viseme timeline, STT, mic meter |
-| [frontend/app.js](frontend/app.js) | Recruiter console controller and the interview loop |
-| [frontend/candidate.html](frontend/candidate.html) · [candidate.js](frontend/candidate.js) | The candidate's page, reached from their emailed link |
+| [frontend/public/avatar.js](frontend/public/avatar.js) | The 2D SVG rig (unbundled, `window.Avatar`) |
+| [frontend/public/avatar3d.js](frontend/public/avatar3d.js) | The 3D rig, which supersedes the 2D one where WebGL works |
+| [frontend/public/speech.js](frontend/public/speech.js) | TTS + viseme timeline, STT, mic meter (`window.Speech`) |
+| [frontend/src/hooks/useInterviewRun.js](frontend/src/hooks/useInterviewRun.js) | The interview turn loop — shared by both pages, prompts and answers only |
+| [frontend/src/App.jsx](frontend/src/App.jsx) | Recruiter console: tabs, dashboard, stage, report, history |
+| [frontend/src/CandidateApp.jsx](frontend/src/CandidateApp.jsx) | The candidate's page, reached from their emailed link |
+| [frontend/src/lib/legacy.js](frontend/src/lib/legacy.js) | Bridge from React to the unbundled `window.Avatar` / `window.Speech` |
+| [frontend/src/components/](frontend/src/components/) | One component per tab, plus drawers, modal, toast and stage pieces |
 
 ## API
 
@@ -442,7 +571,9 @@ The microphone is used only for in-browser transcription. No audio is uploaded, 
 | POST | `/api/interviews` — body: `source`, `history_id`+`candidate_id` or `candidate`, `jd_text`, `options` |
 | GET | `/api/interviews` · `/api/interviews/{id}` (`?full=true` for the reviewer view) · `/api/interviews/{id}/status` |
 | POST | `/api/interviews/{id}/next` — what the interviewer says next |
-| POST | `/api/interviews/{id}/answer` — body: `turn`, `answer`, `seconds`, `mode` |
+| POST | `/api/interviews/{id}/answer` — body: `turn`, `answer`, `seconds`, `mode`. Replies with an `action`: `recorded`, `repeat`, `confirm_end` or `ended` |
+| POST | `/api/interviews/{id}/end` — stop here, keeping what was answered (as against `/abandon`, which discards it) |
+| POST | `/api/interviews/{id}/event` — something that happened around the answers: `tab_hidden`, `no_response`, `mic_lost`, `mic_blocked` |
 | POST | `/api/interviews/{id}/finish` · `/api/interviews/{id}/regrade` · `/api/interviews/{id}/abandon` |
 | GET | `/api/interviews/{id}/report` · `/api/interviews/{id}/export` |
 | PUT | `/api/interviews/{id}/review` — the human decision |
@@ -522,4 +653,22 @@ Checked against the live Azure deployment and in a real browser:
   controls reset, and the ten real interviews were untouched. The endpoint also de-duplicates ids,
   reports ones already gone, and rejects an empty or non-list `interview_ids` with `400`.
 
-Not yet exercised: a **human clicking through a live voice interview** — microphone capture, `SpeechRecognition` transcription accuracy and the real `onboundary` cadence of your installed voices can only be judged by doing one. Everything they feed into is tested; start with a 4-question interview to check the voice and the mic before running a real candidate through it.
+- the spoken-interview rules, against the live deployment and then driven through a real
+  browser with the recogniser stubbed so the timings are real: an answer followed by
+  silence showing the countdown and sending itself with nothing pressed; "sorry, could
+  you repeat that" re-asking the question with the turn still open and nothing recorded;
+  "sorry I don't know" recorded as unanswered, never followed up, and answered with a
+  question from a different category; "I don't want to give this interview" asking to
+  confirm and **not** ending on its own; "no, carry on" returning to the same question;
+  "yes" ending it, releasing the microphone (`micLive() === false`) and producing a
+  report that says on its face that it was ended early. Confirmed there is no `textarea`
+  on the page, no question count and no progress bar on the candidate's side, and that
+  the clock keeps ticking through the seconds an answer spends being graded;
+- `tests/test_core.py` pins the rules that must not drift: 38 utterances across the four
+  intents including answers that merely contain the words ("I don't know the exact number
+  but we handled ten thousand requests per second" is an answer), that a repeat does not
+  consume a turn, that a decline is never scored or chased, that an ambiguous reply to
+  the confirmation carries on rather than ends, that ending with nothing answered is not
+  a completed interview, and that conduct never becomes a number.
+
+Not yet exercised: a **human clicking through a live voice interview** — microphone capture, `SpeechRecognition` transcription accuracy on a real voice and the real `onboundary` cadence of your installed voices can only be judged by doing one. Everything they feed into is tested; start with a 4-question interview to check the voice and the mic before running a real candidate through it. In particular, judge the 5-second silence window against your own room: it is one constant at the top of [useInterviewRun.js](frontend/src/hooks/useInterviewRun.js).

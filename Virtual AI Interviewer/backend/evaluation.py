@@ -29,6 +29,39 @@ FOLLOWUP_BONUS = 1.1
 FILLERS = ("um", "uh", "erm", "like", "you know", "basically", "actually",
            "sort of", "kind of", "i mean")
 
+# Events worth putting in front of a reviewer, and how to describe one.
+CONDUCT_LABELS = {
+    "end_requested": "asked to end the interview",
+    "end_cancelled": "asked to end, then carried on",
+    "ended_early": "the interview was ended early",
+    "repeat_requested": "asked for a question to be repeated",
+    "tab_hidden": "left the interview tab",
+    "time_limit": "reached the time limit",
+    "no_response": "did not respond for a long stretch",
+}
+
+
+def conduct_summary(interview: dict) -> dict:
+    """Counts of what happened around the answers, plus the events themselves.
+
+    Descriptive only. None of it touches a score: leaving the tab may be a
+    doorbell, and asking for a repeat is what a careful listener does. It is put
+    in front of the reviewer to interpret, which is a person's job.
+    """
+    events = interview.get("events") or []
+    counts: dict[str, int] = {}
+    for event in events:
+        kind = str(event.get("kind") or "")
+        counts[kind] = counts.get(kind, 0) + 1
+    away = round(sum(float(e.get("seconds") or 0)
+                     for e in events if e.get("kind") == "tab_hidden"), 1)
+    return {
+        "counts": counts,
+        "labels": {k: CONDUCT_LABELS.get(k, k.replace("_", " ")) for k in counts},
+        "seconds_away": away,
+        "events": events[-40:],
+    }
+
 
 def normalize_weights(weights: dict | None) -> dict:
     base = dict(config.DEFAULT_PARAMETER_WEIGHTS)
@@ -167,8 +200,16 @@ def verdict_for(score: float) -> str:
 
 
 def coverage(turns: list[dict]) -> dict:
-    """What the interview actually managed to cover."""
-    answered = [t for t in turns if (t.get("answer") or "").strip()]
+    """What the interview actually managed to cover.
+
+    "I do not know" is a turn that happened, not a question that was answered:
+    counting it as answered would report an interview as better covered than it
+    was, and quietly raise the confidence of the report on top of that.
+    """
+    spoken = [t for t in turns if (t.get("answer") or "").strip()]
+    answered = [t for t in spoken
+                if ((t.get("assessment") or {}).get("answer_type") or "") != "no_answer"]
+    declined = len(spoken) - len(answered)
     graded = [t for t in answered if (t.get("assessment") or {}).get("scores")]
     categories: dict[str, int] = {}
     for turn in answered:
@@ -177,10 +218,12 @@ def coverage(turns: list[dict]) -> dict:
     return {
         "asked": len(turns),
         "answered": len(answered),
+        "declined": declined,
         "unanswered": len(turns) - len(answered),
         "graded": len(graded),
         "ungraded": len(answered) - len(graded),
         "followups": sum(1 for t in turns if t.get("question_source") == "followup"),
+        "repeats_requested": sum(int(t.get("repeats") or 0) for t in turns),
         "categories": categories,
         "categories_missing": [k for k in config.CATEGORIES if k not in categories],
         "total_words": sum(int((t.get("metrics") or {}).get("words") or 0) for t in answered),
@@ -205,13 +248,20 @@ def _confidence(cov: dict, ai_confidence: str) -> tuple[str, list[str]]:
             level = limit
 
     if cov["answered"] < 4:
-        cap("low", f"only {cov['answered']} questions were answered")
+        n = cov["answered"]
+        cap("low", f"only {n} question{'' if n == 1 else 's'} {'was' if n == 1 else 'were'} answered")
     elif cov["answered"] < 7:
         cap("medium", f"{cov['answered']} questions answered - a short interview")
+    if cov.get("declined"):
+        n = cov["declined"]
+        cap("medium",
+            f"the candidate did not know the answer to {n} question{'' if n == 1 else 's'}")
     if cov["ungraded"]:
         cap("medium", f"{cov['ungraded']} answers could not be graded by the AI")
     if cov["unanswered"] >= 3:
         cap("medium", f"{cov['unanswered']} questions went unanswered")
+    if cov.get("ended_early"):
+        cap("low", "the interview was ended before it finished")
     if cov["total_words"] < 150 and cov["answered"]:
         cap("low", "the answers were very brief in total")
     return level, reasons
@@ -236,6 +286,12 @@ def build_report(interview: dict, holistic: dict, weights: dict | None = None) -
         overall = None
 
     cov = coverage(turns)
+    # An interview somebody walked out of covers whatever it covered, and the
+    # report has to say so on its face rather than reading like a finished one.
+    cov["ended_early"] = bool(interview.get("ended_early"))
+    cov["end_reason"] = interview.get("end_reason", "")
+    cov["ended_by"] = interview.get("ended_by", "")
+    cov["elapsed_seconds"] = round(float(interview.get("elapsed_seconds") or 0), 1)
     confidence, confidence_reasons = _confidence(cov, holistic.get("confidence", "medium"))
 
     # Which parameters carry the most and least support, for the reviewer's eye.
@@ -272,6 +328,9 @@ def build_report(interview: dict, holistic: dict, weights: dict | None = None) -
         "recommended_next_step": holistic.get("recommended_next_step") or "",
         "review_source": holistic.get("source", "ai"),
         "review_error": holistic.get("error", ""),
+        # What happened around the answers - repeats, leaving the tab, ending
+        # early. Shown to the reviewer as context, never as a score.
+        "conduct": conduct_summary(interview),
         # Screening never enters the interview score. It is carried alongside so a
         # reviewer can see resume and performance side by side - and see when they
         # disagree, which is the whole point of interviewing.

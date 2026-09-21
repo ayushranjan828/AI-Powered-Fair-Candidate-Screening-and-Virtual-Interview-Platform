@@ -4,7 +4,7 @@ Bulk resume intake → AI agent analysis against a pasted JD → editable shortl
 
 > The interview stage now exists as a sibling app: **[Virtual AI Interviewer](../Virtual%20AI%20Interviewer/README.md)**. It reads the shortlists accepted here and interviews the candidates on them. See [Where the interviewer plugs in](#where-the-interviewer-plugs-in).
 
-Stack: **HTML / CSS / JS** front end, **Python + FastAPI** back end, **JSON** file storage, **Azure OpenAI** via `.env`.
+Stack: **React (Vite)** front end, **Python + FastAPI** back end, **JSON** file storage, **Azure OpenAI** via `.env`.
 
 ---
 
@@ -30,13 +30,32 @@ Traditional ATS filters reject on literal keyword match. Here:
 #    AZURE_OPENAI_ENDPOINT / _API_KEY / _API_VERSION / _DEPLOYMENT
 #    VITE_-prefixed names are also accepted.
 
-# 3. run
+# 3. run  (builds the React UI on first start, then serves it)
 .\myenv\Scripts\python.exe run.py
 ```
 
 Open <http://127.0.0.1:8000>.
 
-Click the **AI** pill in the header to run a live connectivity check against the deployment.
+Click the **AI** pill at the foot of the sidebar to run a live connectivity check
+against the deployment.
+
+### The front end
+
+The UI is a React app in [frontend/](frontend/), built by Vite. **You do not need to
+run anything separately** — `run.py` checks whether `frontend/dist` is older than the
+sources and, if so, runs `npm install` (first time only) and `npm run build` before
+starting the server. FastAPI then serves `frontend/dist` at `/static` and its
+`index.html` at `/`.
+
+Node.js is therefore required to build the UI. If `npm` is missing, `run.py` serves
+the existing build and warns; with no build at all it stops and says so.
+
+For front-end work with hot reload, run the backend and Vite side by side:
+
+```powershell
+.\myenv\Scripts\python.exe run.py          # terminal 1 - API on 8000
+cd frontend; npm run dev                      # terminal 2 - UI on 5173, proxies /api to 8000
+```
 
 ---
 
@@ -140,7 +159,11 @@ The AI grades the five criteria; the arithmetic and the decision live in [scorin
 | [backend/storage.py](backend/storage.py) | Atomic JSON persistence (`data/sessions`, `data/history`) |
 | [backend/dnsfix.py](backend/dnsfix.py) | DNS fallback for blocked `getaddrinfo` (see Notes) |
 | [backend/excel_export.py](backend/excel_export.py) | `.xlsx` generation |
-| [frontend/](frontend/) | UI (`index.html`, `styles.css`, `app.js`) |
+| [frontend/src/App.jsx](frontend/src/App.jsx) | React shell: tabs, session state, progress polling |
+| [frontend/src/components/](frontend/src/components/) | One component per tab, plus drawer / modal / toast primitives |
+| [frontend/src/lib/api.js](frontend/src/lib/api.js) | `fetch` wrapper: access-token retry, JSON error unwrapping |
+| [frontend/src/styles/](frontend/src/styles/) | Design tokens, layout, primitives, feature styles |
+| [frontend/vite.config.js](frontend/vite.config.js) | Build config — `base: "/static/"` so assets resolve behind FastAPI |
 
 ## API
 
