@@ -68,6 +68,22 @@ export default function InterviewShape({
           />
         </label>
         <output className="settings-out">{options.max_followups}</output>
+
+        <label className="field field-inline">
+          <span>Time limit</span>
+          <input
+            type="range"
+            min="0"
+            max="90"
+            step="5"
+            value={options.time_limit_minutes ?? 0}
+            style={{ "--_fill": `${((options.time_limit_minutes ?? 0) / 90) * 100}%` }}
+            onChange={(e) => set({ time_limit_minutes: Number(e.target.value) })}
+          />
+        </label>
+        <output className="settings-out">
+          {options.time_limit_minutes ? `${options.time_limit_minutes}m` : "none"}
+        </output>
       </div>
 
       {capNote && (
@@ -77,6 +93,13 @@ export default function InterviewShape({
           <strong>{cfg.max_total_turns ?? 30}</strong> turns.
         </p>
       )}
+
+      <p className="hint">
+        A time limit never cuts anybody off mid-answer: reaching it stops new questions being
+        asked and moves to the closing one, so every interview ends the same way. The candidate is
+        told the limit before they begin and sees a clock throughout — they are never shown how
+        many questions are left.
+      </p>
 
       <h3 className="mini-head">Question categories</h3>
       <CategoryChecklist
@@ -156,6 +179,7 @@ export function defaultOptions(cfg) {
   return {
     planned_count: cfg.default_planned_count ?? 10,
     max_followups: cfg.default_max_followups ?? 2,
+    time_limit_minutes: cfg.default_time_limit_minutes ?? 0,
     categories: allCategories(cfg.categories),
     voice: true,
     voice_name: "",

@@ -6,13 +6,17 @@
  * that report nothing) and re-synced whenever the synthesiser fires a word
  * boundary event (so it stays honest on voices that do).
  *
- * In: SpeechRecognition transcribes the answer, with interim results so the
- * candidate can see they are being heard, plus a mic level meter so the avatar
- * can nod along to actual speech.
+ * In: the microphone is opened once, when the candidate starts the interview,
+ * and held until the interview ends - the browser's recording indicator stays on
+ * throughout, the way a call does, instead of flickering per question.
+ * SpeechRecognition transcribes each answer off that session, with interim
+ * results so the candidate can see they are being heard, plus a level meter so
+ * the avatar can nod along to actual speech.
  *
- * Everything degrades: no synthesiser means silent lip-sync on the estimated
- * timeline, and no recogniser means the candidate types instead. The interview
- * never depends on either being present.
+ * The synthesiser degrades: without one the lip-sync runs on the estimated
+ * timeline and the questions are read on screen instead. The recogniser does
+ * not - answers are spoken, never typed, so a browser that cannot transcribe
+ * cannot take the interview, and says so up front rather than half way through.
  */
 window.Speech = (function () {
   "use strict";
@@ -393,13 +397,69 @@ window.Speech = (function () {
     }
   }
 
-  /* -------------------------------------------------------------- mic meter */
+  /* ------------------------------------------------------------ mic session */
+  /* One capture stream for the whole interview. Held open on purpose: asking for
+   * the microphone once, at the start, is how a call behaves, and it means the
+   * recording indicator in the browser chrome is an honest signal of whether the
+   * interview is live. releaseMic() is what turns it off. */
+  let micStream = null;
+
+  /** Ask for the microphone. Resolves {ok} or {ok:false, error} - never throws. */
+  async function requestMic() {
+    if (micStream && micStream.getTracks().some((t) => t.readyState === "live")) {
+      return { ok: true, already: true };
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      return { ok: false, error: "unsupported" };
+    }
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          // The interviewer's voice comes out of the same laptop's speakers, so
+          // without cancellation the recogniser transcribes the question back
+          // into the answer.
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      return { ok: true };
+    } catch (err) {
+      const name = err?.name || "error";
+      return {
+        ok: false,
+        error:
+          name === "NotAllowedError" || name === "SecurityError"
+            ? "denied"
+            : name === "NotFoundError" || name === "OverconstrainedError"
+              ? "missing"
+              : name,
+      };
+    }
+  }
+
+  /** True while the granted microphone is still live (unplugged devices die). */
+  function micLive() {
+    return Boolean(micStream && micStream.getTracks().some((t) => t.readyState === "live"));
+  }
+
+  /** Everything off: recogniser, meter, and the capture itself. */
+  function releaseMic() {
+    stopListening();
+    stopMeter();
+    if (micStream) {
+      micStream.getTracks().forEach((track) => track.stop());
+      micStream = null;
+    }
+  }
+
   /** Live mic level, 0-1, for the level bar and the avatar's nodding. */
   async function startMeter(onLevel) {
     if (meter) return meter;
-    if (!navigator.mediaDevices?.getUserMedia) return null;
+    const granted = await requestMic();
+    if (!granted.ok) return null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = micStream;
       const Ctx = window.AudioContext || window.webkitAudioContext;
       const ctx = new Ctx();
       const source = ctx.createMediaStreamSource(stream);
@@ -423,14 +483,15 @@ window.Speech = (function () {
       meter = {
         stop() {
           if (raf) cancelAnimationFrame(raf);
-          stream.getTracks().forEach((track) => track.stop());
+          // The stream itself is left alone: it belongs to the interview, not to
+          // the meter, and releaseMic() is what ends it.
           ctx.close().catch(() => {});
           meter = null;
         },
       };
       return meter;
     } catch {
-      // Denied or unavailable: the level bar just stays quiet.
+      // Unavailable: the level bar just stays quiet.
       return null;
     }
   }
@@ -445,6 +506,9 @@ window.Speech = (function () {
     cancel,
     listen,
     stopListening,
+    requestMic,
+    releaseMic,
+    micLive,
     startMeter,
     stopMeter,
     voices: allVoices,

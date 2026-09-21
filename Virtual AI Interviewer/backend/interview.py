@@ -11,15 +11,21 @@ trusted to enforce them:
   - a planned question gets at most MAX_FOLLOWUPS_PER_QUESTION follow-ups;
   - the whole interview stops at MAX_TOTAL_TURNS turns, however interesting it is;
   - somebody who gave a non-answer is never followed up - that is badgering;
-  - the closing question is always reached, even if the budget ran out.
+  - the closing question is always reached, even if the budget ran out;
+  - a candidate who asks to stop is asked to confirm, and then it stops.
+
+Not every utterance is an answer either, so submit_utterance() is the real entry
+point from the client: it reads what was actually said (intent.py) and only
+grades the things that were answers.
 """
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 import httpx
 
-from . import ai_agent, candidates, config, evaluation, storage
+from . import ai_agent, candidates, config, evaluation, intent, storage
 
 STATUS_PLANNING = "planning"
 STATUS_READY = "ready"
@@ -102,6 +108,11 @@ def create_interview(candidate_raw: dict, jd_text: str, jd_analysis: dict,
     planned_count = max(4, min(20, planned_count))
     max_followups = int(options.get("max_followups", config.MAX_FOLLOWUPS_PER_QUESTION))
     max_followups = max(0, min(4, max_followups))
+    try:
+        time_limit = int(options.get("time_limit_minutes") or 0)
+    except (TypeError, ValueError):
+        time_limit = 0
+    time_limit = 0 if time_limit <= 0 else max(5, min(180, time_limit))
 
     interview_id = storage.new_id("INT")
     interview = {
@@ -128,6 +139,9 @@ def create_interview(candidate_raw: dict, jd_text: str, jd_analysis: dict,
             # voice and at the speed the recruiter chose, not its own defaults.
             "voice_name": str(options.get("voice_name") or "")[:120],
             "voice_rate": _clamp_rate(options.get("voice_rate")),
+            # 0 means no limit. A limit does not cut the candidate off mid-answer:
+            # it stops new questions being asked and goes to the closing one.
+            "time_limit_minutes": time_limit,
         },
         "weights": evaluation.normalize_weights(options.get("weights")),
         "plan": None,
@@ -138,8 +152,20 @@ def create_interview(candidate_raw: dict, jd_text: str, jd_analysis: dict,
             "followups_used": 0,
             "pending_followup": None,
             "closed": False,
+            # Set when the candidate asks to stop; the next utterance is read as
+            # the answer to "are you sure", not as an answer to the question.
+            "awaiting_end_confirm": False,
+            "declines": 0,
+            "time_called": False,
         },
         "turns": [],
+        # Everything that happened around the answers: asking to stop, asking for
+        # a repeat, leaving the tab. Kept so a reviewer can see how the interview
+        # actually went, not just what was said into it.
+        "events": [],
+        "ended_early": False,
+        "end_reason": "",
+        "ended_by": "",
         "report": None,
         "progress": {"stage": "Queued", "detail": "Preparing the interview plan."},
     }
@@ -252,12 +278,63 @@ def _category_label(category: str) -> str:
 
 
 def _budget_exhausted(interview: dict) -> bool:
-    return len(interview["turns"]) >= config.MAX_TOTAL_TURNS
+    return len(interview["turns"]) >= config.MAX_TOTAL_TURNS or _time_up(interview)
 
 
 def _planned_remaining(interview: dict) -> int:
     plan = interview.get("plan") or {}
     return max(0, len(plan.get("questions", [])) - interview["cursor"]["plan_index"])
+
+
+# ------------------------------------------------------------------ the clock
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def elapsed_seconds(interview: dict) -> float:
+    """Wall-clock seconds since the interviewer said hello.
+
+    Wall clock, not the sum of answer timings: the candidate's experience of how
+    long they have been sitting there includes the thinking and the questions.
+    """
+    started = _parse_iso(interview.get("started_at"))
+    if not started:
+        return 0.0
+    end = _parse_iso(interview.get("completed_at") or interview.get("abandoned_at"))
+    return max(0.0, ((end or datetime.now(timezone.utc)) - started).total_seconds())
+
+
+def time_limit_seconds(interview: dict) -> int:
+    return int((interview.get("options") or {}).get("time_limit_minutes") or 0) * 60
+
+
+def _time_up(interview: dict) -> bool:
+    limit = time_limit_seconds(interview)
+    return bool(limit) and elapsed_seconds(interview) >= limit
+
+
+def _is_answered(turn: dict) -> bool:
+    """An answer that said something. "I do not know" is a turn, not an answer."""
+    if not (turn.get("answer") or "").strip():
+        return False
+    return ((turn.get("assessment") or {}).get("answer_type") or "") != "no_answer"
+
+
+def log_event(interview: dict, kind: str, detail: str = "", **extra) -> dict:
+    """Record something that happened around the answers. Capped, oldest first."""
+    event = {"kind": kind, "at": storage.now_iso(), "detail": str(detail)[:400]}
+    event.update(extra)
+    events = interview.setdefault("events", [])
+    events.append(event)
+    if len(events) > 200:
+        del events[:-200]
+    return event
 
 
 def next_prompt(interview: dict) -> dict:
@@ -301,18 +378,28 @@ def next_prompt(interview: dict) -> dict:
 
     # Out of budget: jump to the closing question if it has not been asked, so the
     # candidate always gets the floor before we wrap up.
+    out_of_time = _time_up(interview)
     if _budget_exhausted(interview) and cursor["plan_index"] < len(questions):
         closing_index = next((i for i, q in enumerate(questions)
                               if q["category"] == "closing"
                               and i >= cursor["plan_index"]), None)
         cursor["plan_index"] = closing_index if closing_index is not None else len(questions)
+        if out_of_time and not cursor.get("time_called"):
+            log_event(interview, "time_limit",
+                      f"Reached the {time_limit_seconds(interview) // 60} minute limit.")
 
     if cursor["plan_index"] < len(questions):
         question = questions[cursor["plan_index"]]
         cursor["plan_index"] += 1
         cursor["followups_used"] = 0
-        return _emit(interview, question, source="planned",
-                     reaction=_pending_reaction(interview))
+        reaction = _pending_reaction(interview)
+        # Said out loud rather than shown: a candidate who is suddenly on the last
+        # question deserves to know why, the way a human would tell them.
+        if out_of_time and not cursor.get("time_called"):
+            cursor["time_called"] = True
+            reaction = (f"{reaction} We are coming up on time, so this will be my "
+                        "last question.").strip()
+        return _emit(interview, question, source="planned", reaction=reaction)
 
     if not cursor["closed"]:
         cursor["closed"] = True
@@ -396,23 +483,49 @@ def _progress(interview: dict) -> dict:
     plan = interview.get("plan") or {}
     total = len(plan.get("questions", []))
     cursor = interview["cursor"]
-    answered = sum(1 for t in interview["turns"] if (t.get("answer") or "").strip())
+    answered = sum(1 for t in interview["turns"] if _is_answered(t))
+    limit = time_limit_seconds(interview)
+    elapsed = elapsed_seconds(interview)
     return {
         "planned_total": total,
         "planned_asked": cursor["plan_index"],
         "turns_asked": len(interview["turns"]),
         "answered": answered,
+        "declined": sum(1 for t in interview["turns"]
+                        if (t.get("answer") or "").strip() and not _is_answered(t)),
         "followups": sum(1 for t in interview["turns"]
                          if t.get("question_source") == "followup"),
         "percent": round(min(100.0, (cursor["plan_index"] / total) * 100), 1) if total else 0.0,
+        # The candidate's page shows the clock and never the question count, so
+        # the timing has to come from the server: a browser tab that was asleep
+        # cannot be trusted to have counted the minutes correctly.
+        "started_at": interview.get("started_at"),
+        "elapsed_seconds": round(elapsed, 1),
+        "time_limit_seconds": limit,
+        "time_remaining_seconds": round(max(0.0, limit - elapsed), 1) if limit else None,
     }
 
 
-def _nonanswer(words: int) -> dict:
-    """A skip or a near-empty answer. Recorded honestly, not graded, not chased.
+# Said when somebody does not know. Rotated so a candidate having a hard run is
+# not met with the same sentence four times, which reads as a machine.
+_DECLINE_ACKS = (
+    "No problem at all. Let us move to something else.",
+    "That is fine - not everyone has touched everything. Let us try a different area.",
+    "Understood, we will leave that one there.",
+    "That is alright. Moving on.",
+)
+_SILENCE_ACKS = (
+    "Let us move on to the next one.",
+    "No problem, we will come back to that another time.",
+)
 
-    This is not a fallback - nothing failed. The candidate declined to answer,
-    which is information for the reviewer but not a score.
+
+def _nonanswer(reason: str = "brief", line: str = "") -> dict:
+    """A decline or a near-empty answer. Recorded honestly, not graded, not chased.
+
+    This is not a fallback - nothing failed. The candidate did not answer, which
+    is information for the reviewer but not a score. It is decided here rather
+    than by the model so that "I do not know" costs exactly nothing, every time.
     """
     return {
         "answer_type": "no_answer",
@@ -420,14 +533,36 @@ def _nonanswer(words: int) -> dict:
         "covered_points": [], "missed_points": [], "strengths": [], "concerns": [],
         "evidence": "",
         "followup": {"needed": False, "question": "", "reason": "", "probe": "none"},
-        "reaction": {"line": "No problem at all, let us move on.", "emotion": "encouraging"},
-        "source": "skipped",
+        "reaction": {"line": line or "No problem at all, let us move on.",
+                     "emotion": "encouraging"},
+        "source": reason,
         "error": "",
     }
 
 
+def _rotate_plan_away(interview: dict, category: str) -> bool:
+    """After a decline, do not walk straight into the same subject again.
+
+    An interviewer who hears "I have not used Kubernetes" does not follow it with
+    a second Kubernetes question - they change the subject. The next planned
+    question is swapped for the nearest one in a different category, so the plan
+    keeps every question it had; only the order changes.
+    """
+    plan = interview.get("plan") or {}
+    questions = plan.get("questions", [])
+    index = interview["cursor"]["plan_index"]
+    if index >= len(questions) or questions[index].get("category") != category:
+        return False
+    swap = next((i for i in range(index + 1, len(questions))
+                 if questions[i].get("category") not in (category, "closing")), None)
+    if swap is None:
+        return False
+    questions[index], questions[swap] = questions[swap], questions[index]
+    return True
+
+
 async def record_answer(interview: dict, turn_number: int, answer: str,
-                        seconds: float, mode: str) -> dict:
+                        seconds: float, mode: str, declined: bool = False) -> dict:
     """Store one answer, grade it, and decide whether to follow up on it."""
     turn = next((t for t in interview["turns"] if t["turn"] == turn_number), None)
     if turn is None:
@@ -460,8 +595,16 @@ async def record_answer(interview: dict, turn_number: int, answer: str,
     })
 
     words = metrics["words"]
-    if words < 3:
-        turn["assessment"] = _nonanswer(words)
+    if declined or words < 3:
+        cursor = interview["cursor"]
+        cursor["declines"] = int(cursor.get("declines") or 0) + 1
+        pool = _SILENCE_ACKS if words < 1 else _DECLINE_ACKS
+        turn["assessment"] = _nonanswer(
+            "declined" if declined else "brief",
+            pool[(cursor["declines"] - 1) % len(pool)],
+        )
+        # Change the subject rather than asking the same thing twice over.
+        _rotate_plan_away(interview, turn["category"])
     else:
         cursor = interview["cursor"]
         ctx = {
@@ -503,6 +646,146 @@ async def record_answer(interview: dict, turn_number: int, answer: str,
         "metrics": metrics,
         "progress": _progress(interview),
     }
+
+
+# --------------------------------------------------------- what was said, really
+_REPEAT_ACKS = (
+    "Of course.",
+    "No problem, here it is again.",
+    "Sure, let me say that again.",
+)
+# After this many repeats of one question, the interviewer says out loud that
+# moving on is allowed. Asking again is never refused - that would be hostile -
+# but a candidate stuck on a question should be told they can leave it.
+_REPEATS_BEFORE_OFFERING_TO_MOVE_ON = 3
+
+
+def _note_interjection(turn: dict, kind: str, text: str) -> None:
+    """Something said at this question that was not an answer to it."""
+    turn.setdefault("interjections", []).append({
+        "kind": kind, "text": (text or "").strip()[:400], "at": storage.now_iso(),
+    })
+
+
+def _repeat_envelope(interview: dict, turn: dict, lead: str, tail: str = "") -> dict:
+    """The same question again. The turn is not consumed and nothing is graded."""
+    return {
+        "action": "repeat",
+        "turn": turn["turn"],
+        "question": turn["question"],
+        "speech": " ".join(p for p in (lead, turn["question"], tail) if p),
+        "emotion": "friendly",
+        "progress": _progress(interview),
+    }
+
+
+def mark_ended(interview: dict, reason: str, by: str = "candidate") -> dict:
+    """Stop the conversation. Writing the report is a separate, slower step.
+
+    Deliberately not the same thing as finalize(): the candidate has just asked
+    to leave and should not be held on the page for an AI evaluation. The record
+    is closed here, and whoever is driving calls /finish afterwards.
+    """
+    cursor = interview["cursor"]
+    cursor["awaiting_end_confirm"] = False
+    cursor["pending_followup"] = None
+    cursor["closed"] = True
+    interview["ended_early"] = True
+    interview["end_reason"] = (reason or "").strip()
+    interview["ended_by"] = by
+    interview["ended_at"] = storage.now_iso()
+    log_event(interview, "ended_early", reason, by=by)
+
+    answered = any(_is_answered(t) for t in interview["turns"])
+    if not answered:
+        # Nothing was said that could be reviewed. Calling that "completed" would
+        # put an empty report in front of a recruiter as though it meant something.
+        interview["status"] = STATUS_ABANDONED
+        interview["abandoned_at"] = storage.now_iso()
+        interview["abandon_reason"] = reason
+        interview["progress"] = {"stage": "Ended", "detail": reason}
+    storage.save_interview(interview)
+    return {"status": interview["status"], "evaluate": answered}
+
+
+def _ended_envelope(interview: dict, reason: str, by: str = "candidate",
+                    speech: str = "") -> dict:
+    outcome = mark_ended(interview, reason, by)
+    return {
+        "action": "ended",
+        "speech": speech or (
+            "Understood - I will stop the interview here. Thank you for your time "
+            "today, and the team will be in touch."
+        ),
+        "emotion": "friendly",
+        "status": outcome["status"],
+        "evaluate": outcome["evaluate"],
+        "progress": _progress(interview),
+    }
+
+
+async def submit_utterance(interview: dict, turn_number: int, text: str,
+                           seconds: float, mode: str) -> dict:
+    """One thing the candidate said, whatever it turns out to have been.
+
+    The client posts every utterance here; this decides whether it was an answer,
+    a request for the question again, a decline, or a request to stop - and only
+    answers reach the grader. Anything that is not an answer leaves the turn open,
+    so nothing is recorded as answered that was not.
+    """
+    turn = next((t for t in interview["turns"] if t["turn"] == turn_number), None)
+    if turn is None:
+        raise KeyError(f"turn {turn_number} was never asked")
+
+    cursor = interview["cursor"]
+    confirming = bool(cursor.get("awaiting_end_confirm"))
+    read = intent.classify(text, confirming=confirming)
+    kind = read["intent"]
+
+    if confirming:
+        if kind == intent.YES:
+            _note_interjection(turn, "end_confirmed", text)
+            return _ended_envelope(
+                interview, "The candidate asked to end the interview.", "candidate")
+        # Anything that is not a clear yes is read as "carry on". Ending is the
+        # irreversible direction, so ambiguity resolves the other way.
+        cursor["awaiting_end_confirm"] = False
+        _note_interjection(turn, "end_cancelled", text)
+        log_event(interview, "end_cancelled", text[:200])
+        storage.save_interview(interview)
+        return _repeat_envelope(
+            interview, turn, "No problem, we will carry on where we were.")
+
+    if kind == intent.END:
+        cursor["awaiting_end_confirm"] = True
+        _note_interjection(turn, "end_requested", text)
+        log_event(interview, "end_requested", text[:200], matched=read["matched"])
+        storage.save_interview(interview)
+        return {
+            "action": "confirm_end",
+            "turn": turn_number,
+            "speech": ("Of course - let me just check before I stop. Would you like "
+                       "to end the interview now? Say yes to end it, or no to carry on."),
+            "emotion": "neutral",
+            "progress": _progress(interview),
+        }
+
+    if kind == intent.REPEAT:
+        repeats = int(turn.get("repeats") or 0) + 1
+        turn["repeats"] = repeats
+        _note_interjection(turn, "repeat", text)
+        log_event(interview, "repeat_requested", text[:200], turn=turn_number)
+        storage.save_interview(interview)
+        tail = ("" if repeats < _REPEATS_BEFORE_OFFERING_TO_MOVE_ON else
+                "If you would rather leave this one, just say so and we will move on.")
+        return _repeat_envelope(
+            interview, turn, _REPEAT_ACKS[(repeats - 1) % len(_REPEAT_ACKS)], tail)
+
+    result = await record_answer(interview, turn_number, text, seconds, mode,
+                                 declined=kind in (intent.DECLINE, intent.SILENCE))
+    result["action"] = "recorded"
+    result["intent"] = kind
+    return result
 
 
 def _queue_followup(interview: dict, turn: dict) -> None:
@@ -548,6 +831,9 @@ def _queue_followup(interview: dict, turn: dict) -> None:
 async def finalize(interview: dict) -> dict:
     """Close the interview out and produce the report."""
     interview["progress"] = {"stage": "Evaluating", "detail": "Reviewing the transcript."}
+    # Frozen before the status changes: elapsed_seconds() stops counting once the
+    # record says completed, so reading it afterwards gives a different number.
+    interview["elapsed_seconds"] = round(elapsed_seconds(interview), 1)
     storage.save_interview(interview)
 
     try:
@@ -576,10 +862,13 @@ async def regrade(interview: dict) -> dict:
 
 
 def abandon(interview: dict, reason: str = "") -> dict:
+    interview["elapsed_seconds"] = round(elapsed_seconds(interview), 1)
     interview["status"] = STATUS_ABANDONED
     interview["abandoned_at"] = storage.now_iso()
     interview["abandon_reason"] = reason.strip()
     interview["progress"] = {"stage": "Abandoned", "detail": reason.strip()}
+    interview["cursor"]["awaiting_end_confirm"] = False
+    log_event(interview, "abandoned", reason.strip())
     storage.save_interview(interview)
     return interview
 
@@ -602,6 +891,10 @@ def public_view(interview: dict) -> dict:
             "question_source": turn["question_source"],
             "reaction": turn.get("reaction", ""),
             "answer": turn.get("answer", ""),
+            # Whether it counted as an answer, and nothing about how good it was.
+            # The full answer_type carries a judgement ("evasive"), which the
+            # candidate's own page must never be able to show them.
+            "declined": bool((turn.get("answer") or "").strip()) and not _is_answered(turn),
             "answer_seconds": turn.get("answer_seconds", 0),
             "asked_at": turn.get("asked_at"),
             "answered_at": turn.get("answered_at"),
@@ -610,6 +903,9 @@ def public_view(interview: dict) -> dict:
     return {
         "interview_id": interview["interview_id"],
         "status": interview["status"],
+        "started_at": interview.get("started_at"),
+        "ended_early": bool(interview.get("ended_early")),
+        "awaiting_end_confirm": bool(interview["cursor"].get("awaiting_end_confirm")),
         "job_title": interview.get("job_title"),
         "candidate": {
             "candidate_name": interview["candidate"].get("candidate_name"),

@@ -263,7 +263,9 @@ export default function HistoryTab({ rows, onRefresh, onOpenReport, onOpenStage,
                   )}
                 </div>
                 <div className="hm">
-                  {r.interview_id} · {when(r.created_at)} · {r.turns} answers · from {r.source}
+                  {r.interview_id} · {when(r.created_at)} · {r.turns} answer
+                  {r.turns === 1 ? "" : "s"} · from {r.source}
+                  {r.ended_early ? " · ended early" : ""}
                 </div>
               </div>
 

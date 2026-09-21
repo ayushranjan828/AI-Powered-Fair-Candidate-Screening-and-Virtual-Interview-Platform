@@ -99,6 +99,18 @@
   border-color: var(--bad);
 }
 
+/* Ending an interview is not the same kind of act as discarding one, so it does
+   not get the same weight: readable as serious, not as a warning. */
+.btn-danger-ghost {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--bad) 34%, transparent);
+  color: var(--bad);
+}
+.btn-danger-ghost:hover:not(:disabled) {
+  background: var(--bad-soft);
+  border-color: var(--bad);
+}
+
 .btn-link {
   padding: 2px 5px;
   color: var(--brand);

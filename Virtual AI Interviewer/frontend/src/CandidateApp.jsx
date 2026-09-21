@@ -8,6 +8,7 @@ import { useConfirm } from "./components/Confirm.jsx";
 import { useToast } from "./components/Toast.jsx";
 import useInterviewRun from "./hooks/useInterviewRun.js";
 import { getJson, postJson, seg } from "./lib/api.js";
+import { duration } from "./lib/format.js";
 import { speech } from "./lib/legacy.js";
 
 /* The candidate's side of the interview, reached from the link in the
@@ -18,6 +19,11 @@ import { speech } from "./lib/legacy.js";
  * candidate, or anything from the console. The only endpoints it touches are
  * the two invite routes and the ordinary interview loop, and it reads the
  * candidate-safe interview view.
+ *
+ * Two things it deliberately does not show: how many questions are left, and a
+ * box to type into. The first changes how people answer once they can see the
+ * end coming; the second is a paste target. What replaces them is a clock and a
+ * microphone that is simply on, the way it would be on a call.
  */
 
 // /i/<token> — trailing slashes and any query string are tolerated.
@@ -26,28 +32,37 @@ const TOKEN = decodeURIComponent(
 );
 
 const PLAN_POLL_MS = 1200;
+/** An alt-tab shorter than this is a notification, not somebody leaving. */
+const AWAY_FLOOR_S = 2;
+const MIC_CHECK_MS = 5000;
 
-function DeviceNote() {
-  const problems = [];
-  if (!speech().canListen) {
-    problems.push(
-      "This browser cannot turn speech into text, so you will need to type your answers. " +
-        "Chrome or Edge supports the microphone.",
-    );
-  }
-  if (!speech().canSpeak) {
-    problems.push(
-      "This browser has no voice, so the questions will appear on screen without being read aloud.",
-    );
-  }
+const MIC_TROUBLE = {
+  denied: {
+    title: "The microphone is blocked",
+    body:
+      "This interview is spoken, so it cannot run without a microphone. Click the microphone " +
+      "icon in your browser's address bar, choose Allow, and try again.",
+  },
+  missing: {
+    title: "No microphone was found",
+    body:
+      "Plug in or connect a microphone — a headset is ideal — then try again. If you are on a " +
+      "laptop, check that the built-in microphone is not disabled in your system settings.",
+  },
+  unsupported: {
+    title: "This browser cannot use the microphone",
+    body: "Please open your interview link in Chrome or Edge on a laptop or desktop.",
+  },
+};
 
-  return problems.length ? (
-    <div className="inline-note">{problems.join(" ")}</div>
-  ) : (
-    <div className="inline-note inline-note-ok">
-      Your browser supports both the voice and the microphone. You will be asked for microphone
-      access when you begin.
-    </div>
+function micTrouble(code) {
+  return (
+    MIC_TROUBLE[code] || {
+      title: "The microphone could not be started",
+      body:
+        "Close anything else that might be using it — another call, or a recording app — and " +
+        "try again.",
+    }
   );
 }
 
@@ -64,6 +79,7 @@ export default function CandidateApp() {
   const [options, setOptions] = useState({});
   const [doneLead, setDoneLead] = useState("");
   const [starting, setStarting] = useState(false);
+  const [micProblem, setMicProblem] = useState(null);
 
   const finishedRef = useRef(false);
 
@@ -74,29 +90,35 @@ export default function CandidateApp() {
   }, []);
 
   /* --------------------------------------------------------- wrapping up */
-  const wrapUp = useCallback(async () => {
-    finishedRef.current = true;
-    setPanel("wrapping");
-    setChip({ text: "Finishing", cls: "pill-muted" });
+  const wrapUp = useCallback(
+    async ({ evaluate = true, lead = "" } = {}) => {
+      finishedRef.current = true;
+      setPanel("wrapping");
+      setChip({ text: "Finishing", cls: "pill-muted" });
 
-    // The evaluation is produced for the recruiter. The candidate is never
-    // shown it, and never sees a score - they only need to know it saved.
-    try {
-      await postJson(`/api/interviews/${seg(interviewId)}/finish`);
-    } catch (err) {
-      // Their answers are already stored turn by turn, so this is not their
-      // problem to solve - the recruiter can re-run the review.
-      console.warn("finish failed:", err.message);
-    }
+      // The evaluation is produced for the recruiter. The candidate is never
+      // shown it, and never sees a score - they only need to know it saved.
+      if (evaluate) {
+        try {
+          await postJson(`/api/interviews/${seg(interviewId)}/finish`);
+        } catch (err) {
+          // Their answers are already stored turn by turn, so this is not their
+          // problem to solve - the recruiter can re-run the review.
+          console.warn("finish failed:", err.message);
+        }
+      }
 
-    const who = info?.interviewer?.name || "your interviewer";
-    setDoneLead(
-      `Thank you for talking with ${who} today. Your interview has been saved and the team will ` +
-        "review it and be in touch about the next step.",
-    );
-    setChip({ text: "Completed", cls: "pill-ok" });
-    setPanel("done");
-  }, [interviewId, info]);
+      const who = info?.interviewer?.name || "your interviewer";
+      setDoneLead(
+        lead ||
+          `Thank you for talking with ${who} today. Your interview has been saved and the team ` +
+            "will review it and be in touch about the next step.",
+      );
+      setChip({ text: "Completed", cls: "pill-ok" });
+      setPanel("done");
+    },
+    [interviewId, info],
+  );
 
   const run = useInterviewRun({
     interviewId,
@@ -104,6 +126,17 @@ export default function CandidateApp() {
     onClosing: async () => {
       await run.teardown();
       await wrapUp();
+    },
+    // They asked to stop, out loud, and the interviewer agreed. The microphone
+    // goes off here - not when they eventually close the tab.
+    onEnded: async (res) => {
+      await run.teardown();
+      await wrapUp({
+        evaluate: res?.evaluate !== false,
+        lead:
+          "Your interview was ended, and everything you answered has been saved. The team will " +
+          "be in touch about the next step.",
+      });
     },
     onError: (msg, kind = "err") => toast(msg, kind),
   });
@@ -172,6 +205,45 @@ export default function CandidateApp() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [interviewId]);
 
+  /* Leaving the page mid-interview, and losing the microphone, are both recorded
+   * - as observations for the reviewer to read, never as anything that touches a
+   * score. Somebody who looked away may have answered their door. */
+  useEffect(() => {
+    if (!interviewId || panel !== "stage") return undefined;
+
+    let awaySince = 0;
+    let micWarned = false;
+
+    const report = (kind, seconds) =>
+      postJson(`/api/interviews/${seg(interviewId)}/event`, { kind, seconds }).catch(() => {});
+
+    const onVisibility = () => {
+      if (document.hidden) {
+        awaySince = Date.now();
+        return;
+      }
+      if (!awaySince) return;
+      const seconds = Math.round((Date.now() - awaySince) / 1000);
+      awaySince = 0;
+      if (seconds < AWAY_FLOOR_S) return;
+      report("tab_hidden", seconds);
+      toast("Please stay on this page until the interview has finished.", "");
+    };
+
+    const micCheck = setInterval(() => {
+      if (speech().micLive() || micWarned) return;
+      micWarned = true;
+      report("mic_lost", 0);
+      toast("The microphone stopped. Check it is connected and still allowed.", "err");
+    }, MIC_CHECK_MS);
+
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      clearInterval(micCheck);
+    };
+  }, [interviewId, panel, toast]);
+
   /* ------------------------------------------------------------- starting */
   const openStage = useCallback(
     async (id) => {
@@ -210,6 +282,18 @@ export default function CandidateApp() {
 
   const begin = useCallback(async () => {
     setStarting(true);
+    setMicProblem(null);
+
+    /* The microphone is asked for here and nowhere else, inside the click that
+     * browsers require for it - and before anything is created, so a candidate
+     * who cannot grant it has not half-started an interview. */
+    const granted = await run.arm();
+    if (!granted.ok) {
+      setStarting(false);
+      setMicProblem(granted.error || "denied");
+      return;
+    }
+
     setPanel("preparing");
     setChip({ text: "Preparing", cls: "pill-muted" });
 
@@ -231,15 +315,6 @@ export default function CandidateApp() {
     }
 
     setInterviewId(started.interview_id);
-
-    // Started from the click that got us here, so the browser grants audio.
-    if (speech().canListen) {
-      speech().startMeter((level) => {
-        const el = run.levelRef.current;
-        if (el) el.style.width = `${Math.round(level * 100)}%`;
-        window.Avatar?.pulse?.(level);
-      });
-    }
 
     // Wait for the question plan before showing the stage.
     await new Promise((resolve) => {
@@ -269,22 +344,38 @@ export default function CandidateApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openStage, toast]);
 
-  const skip = useCallback(async () => {
+  /** The button version of saying "I would like to stop". Same ending either way. */
+  const endNow = useCallback(async () => {
     const ok = await confirm({
-      title: "Skip this question?",
-      body: "It will be recorded as unanswered.",
-      ok: "Skip",
+      title: "End the interview now?",
+      body:
+        "Everything you have answered so far is kept and sent to the team. You will not be " +
+        "able to carry on afterwards.",
+      ok: "End interview",
+      danger: true,
     });
-    if (ok) await run.submit("skipped");
+    if (!ok) return;
+
+    const res = await run.endInterview("Ended by the candidate.");
+    await run.teardown();
+    await wrapUp({
+      evaluate: res?.evaluate !== false,
+      lead:
+        "You ended the interview, and everything you answered has been saved. The team will be " +
+        "in touch about the next step.",
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [confirm, run.submit]);
+  }, [confirm, run.endInterview, wrapUp]);
 
   /* --------------------------------------------------------------- render */
   const greetingName =
     info?.greeting_name && info.greeting_name !== "there" ? info.greeting_name : "there";
 
-  const total = run.progress.planned_total || 0;
-  const asked = run.progress.planned_asked || 0;
+  const limit = info?.time_limit_minutes || 0;
+  const remaining = run.progress.time_limit_seconds
+    ? Math.max(0, run.progress.time_limit_seconds - run.elapsed)
+    : null;
+  const lowOnTime = remaining !== null && remaining <= 120;
 
   return (
     <>
@@ -303,6 +394,21 @@ export default function CandidateApp() {
           </div>
         </div>
         <div className="topbar-right">
+          {panel === "stage" && (
+            <span
+              className={`clock ${lowOnTime ? "clock-low" : ""}`}
+              title={
+                remaining !== null
+                  ? "Time elapsed, and how long is left"
+                  : "How long you have been in the interview"
+              }
+            >
+              <span className="clock-face">{duration(run.elapsed)}</span>
+              {remaining !== null && (
+                <span className="clock-left">{duration(remaining)} left</span>
+              )}
+            </span>
+          )}
           <span className={`pill ${chip.cls}`}>{chip.text}</span>
         </div>
       </header>
@@ -348,18 +454,32 @@ export default function CandidateApp() {
                 <h3 className="mini-head">What to expect</h3>
                 <ul className="welcome-list">
                   <li>
-                    A conversation, not a form. You will be asked about your background, your
-                    projects and a few scenarios, with follow-up questions based on what you say.
+                    A spoken conversation, not a form. You will be asked about your background,
+                    your projects and a few scenarios, with follow-up questions based on what you
+                    say.
                   </li>
                   <li>
-                    <strong>Speak your answers, or type them</strong> — whichever you prefer. You
-                    can switch at any point.
+                    <strong>Answers are spoken aloud.</strong> Your microphone stays on for the
+                    whole interview and there is nothing to type — just talk, and pause when you
+                    have finished an answer.
                   </li>
                   <li>
-                    There is no timer. Take as long as you need on each answer, and think aloud if
-                    it helps.
+                    Ask for a question again at any time — say <em>&ldquo;could you repeat
+                    that&rdquo;</em> — as often as you need. It is not held against you.
                   </li>
-                  <li>You can have any question repeated, and you can skip a question.</li>
+                  <li>
+                    If you do not know something, say so and the interviewer will move on to a
+                    different question.
+                  </li>
+                  <li>
+                    {limit
+                      ? `The interview is scheduled for about ${limit} minutes, and a clock is on screen throughout.`
+                      : "There is no per-question timer. Take as long as you need, and think aloud if it helps."}
+                  </li>
+                  <li>
+                    You can stop at any point — say so out loud, or use{" "}
+                    <strong>End interview</strong>. Your microphone switches off when you do.
+                  </li>
                   <li>
                     If you close this page, opening your link again picks up where you left off.
                   </li>
@@ -375,22 +495,42 @@ export default function CandidateApp() {
                   </div>
                 )}
 
-                <DeviceNote />
+                {!run.canListen ? (
+                  <div className="inline-note inline-note-bad">
+                    <strong>This browser cannot transcribe speech.</strong> The interview is
+                    spoken, so please open your link in <strong>Chrome</strong> or{" "}
+                    <strong>Edge</strong> on a laptop or desktop. Nothing is lost by switching —
+                    your link works exactly the same there.
+                  </div>
+                ) : micProblem ? (
+                  <div className="inline-note inline-note-bad">
+                    <strong>{micTrouble(micProblem).title}.</strong>{" "}
+                    {micTrouble(micProblem).body}
+                  </div>
+                ) : (
+                  <div className="inline-note inline-note-ok">
+                    Your browser supports the interview. You will be asked for microphone access
+                    once, when you begin, and it is used only to turn your speech into text in
+                    this browser — no audio is recorded or uploaded.
+                  </div>
+                )}
 
                 <div className="actions-row">
                   <button
                     type="button"
                     className="btn btn-primary btn-lg"
                     onClick={begin}
-                    disabled={starting}
+                    disabled={starting || !run.canListen}
                   >
-                    {info?.state === "resume" || info?.state === "preparing"
-                      ? "Continue my interview"
-                      : "Begin my interview"}
+                    {micProblem
+                      ? "Try again"
+                      : info?.state === "resume" || info?.state === "preparing"
+                        ? "Continue my interview"
+                        : "Begin my interview"}
                   </button>
                   <span className="hint">
-                    Your microphone is used only to turn your speech into text in this browser. No
-                    audio is recorded or uploaded.
+                    Somewhere quiet, with a headset if you have one, gives the clearest
+                    transcription.
                   </span>
                 </div>
               </div>
@@ -428,17 +568,17 @@ export default function CandidateApp() {
                 <AvatarStage badge={run.badge} />
                 <Caption tokens={run.caption.tokens} active={run.caption.active} />
 
+                {/* Repeating lives next to the answer, where it is needed; this
+                    is only for leaving, which should not sit beside it. */}
                 <div className="stage-tools">
                   <button
                     type="button"
-                    className="btn btn-ghost"
-                    onClick={run.repeat}
+                    className="btn btn-danger-ghost"
+                    onClick={endNow}
                     disabled={run.busy}
+                    title="Stop here — your answers so far are kept"
                   >
-                    ↻ Repeat the question
-                  </button>
-                  <button type="button" className="btn btn-ghost" onClick={run.toggleMute}>
-                    {run.muted ? "🔊 Unmute voice" : "🔈 Mute voice"}
+                    End interview
                   </button>
                 </div>
               </div>
@@ -447,17 +587,9 @@ export default function CandidateApp() {
                 <QuestionPanel
                   run={run}
                   topicFallback="Getting started"
-                  countLabel={total ? `Question ${Math.min(asked, total)} of about ${total}` : ""}
-                >
-                  <button
-                    type="button"
-                    className="btn btn-link"
-                    onClick={skip}
-                    disabled={run.busy}
-                  >
-                    Skip this question
-                  </button>
-                </QuestionPanel>
+                  showProgress={false}
+                  meta=""
+                />
 
                 <div className="card">
                   <div className="card-head-row">
@@ -465,7 +597,7 @@ export default function CandidateApp() {
                     <span className="sub">{run.progress.answered ?? 0} answered</span>
                   </div>
                   <div className="turn-log">
-                    <TurnLog turns={run.turns} emptyAnswerText="Skipped." showIds={false} />
+                    <TurnLog turns={run.turns} emptyAnswerText="Not answered." showIds={false} />
                   </div>
                 </div>
               </div>
@@ -494,8 +626,8 @@ export default function CandidateApp() {
               <h2>Your interview is complete</h2>
               <p className="welcome-lead">{doneLead}</p>
               <p className="hint">
-                You can close this page now. There is nothing further for you to do, and this link
-                will no longer start a new interview.
+                Your microphone has been switched off. You can close this page now — there is
+                nothing further for you to do, and this link will no longer start a new interview.
               </p>
             </div>
           </section>

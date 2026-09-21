@@ -95,6 +95,11 @@ PLANNED_QUESTION_COUNT = int(_env("PLANNED_QUESTION_COUNT", default="10"))
 MAX_FOLLOWUPS_PER_QUESTION = int(_env("MAX_FOLLOWUPS_PER_QUESTION", default="2"))
 MAX_TOTAL_TURNS = int(_env("MAX_TOTAL_TURNS", default="30"))
 
+# Wall-clock limit on one interview, in minutes. 0 is no limit. Nobody is cut off
+# mid-answer: reaching the limit stops new questions being asked and moves to the
+# closing one, so every interview ends the same way it would have anyway.
+TIME_LIMIT_MINUTES = int(_env("INTERVIEW_TIME_LIMIT_MINUTES", default="0"))
+
 # An answer shorter than this is treated as a non-answer ("skip", "I don't know")
 # and never earns a follow-up - pressing someone who has nothing to say is noise.
 MIN_ANSWER_WORDS_FOR_FOLLOWUP = int(_env("MIN_ANSWER_WORDS_FOR_FOLLOWUP", default="12"))

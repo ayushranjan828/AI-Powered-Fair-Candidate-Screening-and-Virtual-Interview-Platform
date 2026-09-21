@@ -8,7 +8,7 @@ import { useConfirm } from "./Confirm.jsx";
 import { useToast } from "./Toast.jsx";
 import useInterviewRun from "../hooks/useInterviewRun.js";
 import { getJson, postJson, seg } from "../lib/api.js";
-import { properName } from "../lib/format.js";
+import { duration, properName } from "../lib/format.js";
 
 /**
  * The recruiter conducting an interview themselves — used when they are sitting
@@ -23,14 +23,27 @@ export default function StageTab({ interviewId, onEvaluated, onAbandoned }) {
 
   const [interview, setInterview] = useState(null);
   const [loadError, setLoadError] = useState(null);
-  const [gate, setGate] = useState("start"); // start | running | finish
+  const [gate, setGate] = useState("start"); // start | resume | running | finish
   const [evaluating, setEvaluating] = useState(false);
   const loadedFor = useRef(null);
+  const pendingResume = useRef(null);
 
   const run = useInterviewRun({
     interviewId,
     options: interview?.options,
     onClosing: () => setGate("finish"),
+    // The candidate asked to stop, and the engine agreed. Same destination as
+    // reaching the last question: the transcript is reviewed as it stands.
+    onEnded: async (res) => {
+      await run.teardown();
+      setGate(res?.evaluate === false ? "start" : "finish");
+      toast(
+        res?.evaluate === false
+          ? "The interview was ended before anything was answered"
+          : "The candidate ended the interview — it can still be evaluated",
+        "",
+      );
+    },
     onError: (msg, kind = "err") => toast(msg, kind),
   });
 
@@ -66,15 +79,18 @@ export default function StageTab({ interviewId, onEvaluated, onAbandoned }) {
         return;
       }
 
+      /* An interview already under way waits behind a button rather than picking
+       * itself up the moment the tab renders. The microphone is the reason: a
+       * browser only grants it inside a click, so resuming automatically would
+       * start an interview that cannot hear anybody. */
       const last = turns[turns.length - 1];
-      if (last && !(last.answer || "").trim()) {
-        // Mid-interview reload: pick the conversation back up where it stopped.
-        setGate("running");
-        run.resumeAt(last, view.progress || {});
-      } else if (turns.length) {
-        // Answers all in, mid-interview: carry on with the next question.
-        setGate("running");
-        run.runNext();
+      if (turns.length) {
+        pendingResume.current = {
+          last: last && !(last.answer || "").trim() ? last : null,
+          progress: view.progress || {},
+        };
+        setGate("resume");
+        run.setChip({ text: "Paused", cls: "pill-muted" });
       } else {
         setGate("start");
       }
@@ -102,19 +118,52 @@ export default function StageTab({ interviewId, onEvaluated, onAbandoned }) {
   /* -------------------------------------------------------------- actions */
   const begin = useCallback(async () => {
     setGate("running");
-    await run.begin();
+    const granted = await run.begin();
+    if (!granted?.ok) {
+      setGate("start");
+      toast(
+        granted?.error === "denied"
+          ? "The microphone was blocked. Allow it in the address bar, then begin again."
+          : "No microphone is available — the interview is spoken, so it cannot start.",
+        "err",
+      );
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run.begin]);
+  }, [run.begin, toast]);
 
-  const skip = useCallback(async () => {
-    const ok = await confirm({
-      title: "Skip this question?",
-      body: "It will be recorded as unanswered.",
-      ok: "Skip",
-    });
-    if (ok) await run.submit("skipped");
+  /** Pick a half-finished interview back up, with the microphone this time. */
+  const resume = useCallback(async () => {
+    const pending = pendingResume.current;
+    setGate("running");
+    const granted = await run.arm();
+    if (!granted?.ok) {
+      setGate("resume");
+      toast(
+        granted?.error === "denied"
+          ? "The microphone was blocked. Allow it in the address bar, then try again."
+          : "No microphone is available — the interview is spoken, so it cannot resume.",
+        "err",
+      );
+      return;
+    }
+    if (pending?.last) run.resumeAt(pending.last, pending.progress);
+    else await run.runNext();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [confirm, run.submit]);
+  }, [run.arm, run.resumeAt, run.runNext, toast]);
+
+  /** Stop here but keep what was said, as against discarding it entirely. */
+  const endNow = useCallback(async () => {
+    const ok = await confirm({
+      title: "End the interview here?",
+      body: "Everything answered so far is kept, and can be evaluated as it stands.",
+      ok: "End interview",
+    });
+    if (!ok) return;
+    const res = await run.endInterview("Ended by the interviewer.");
+    await run.teardown();
+    setGate(res?.evaluate === false ? "start" : "finish");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirm, run.endInterview]);
 
   const evaluate = useCallback(async () => {
     setEvaluating(true);
@@ -185,10 +234,13 @@ export default function StageTab({ interviewId, onEvaluated, onAbandoned }) {
   const followups = run.progress.followups || 0;
   const answered = run.progress.answered ?? 0;
 
+  // The recruiter's own screen, so it does show the shape of the plan - it is
+  // the candidate's view that is deliberately kept to the clock alone.
   const countLabel = total
     ? `Question ${Math.min(asked, total)} of ${total}` +
       (followups ? ` · ${followups} follow-up${followups === 1 ? "" : "s"}` : "")
     : "";
+  const meta = gate === "running" ? `${countLabel} · ${duration(run.elapsed)}` : countLabel;
 
   return (
     <div className="stage-grid">
@@ -209,16 +261,20 @@ export default function StageTab({ interviewId, onEvaluated, onAbandoned }) {
         <AvatarStage badge={run.badge} />
         <Caption tokens={run.caption.tokens} active={run.caption.active} />
 
+        {/* Repeating the question lives in the answer panel, next to where it
+            is needed. What is left here is everything about the session. */}
         <div className="stage-tools">
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={run.repeat}
-            disabled={run.busy}
-            title="Have the question asked again"
-          >
-            ↻ Repeat question
-          </button>
+          {gate === "running" && (
+            <button
+              type="button"
+              className="btn btn-danger-ghost"
+              onClick={endNow}
+              disabled={run.busy}
+              title="Stop here, keeping everything answered so far"
+            >
+              End interview
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-ghost"
@@ -243,17 +299,34 @@ export default function StageTab({ interviewId, onEvaluated, onAbandoned }) {
         <QuestionPanel
           run={run}
           showDifficulty
-          countLabel={countLabel}
+          meta={meta}
+          topicFallback={gate === "resume" ? "Paused" : "Not started"}
           questionFallback={
             gate === "finish"
               ? "This interview is finished."
-              : "The interview has not started yet."
+              : gate === "resume"
+                ? "Paused part way through — carry on below."
+                : "The interview has not started yet."
           }
-        >
-          <button type="button" className="btn btn-ghost" onClick={skip} disabled={run.busy}>
-            Skip this question
-          </button>
-        </QuestionPanel>
+        />
+
+        {gate === "resume" && (
+          <div className="start-gate">
+            <p>
+              <strong>This interview is part way through.</strong>
+            </p>
+            <p className="sub">
+              {answered} answer{answered === 1 ? "" : "s"} recorded so far.{" "}
+              {pendingResume.current?.last
+                ? "The question that was open will be asked again, and the plan carries on from there."
+                : "It will carry on with the next question in the plan."}{" "}
+              The microphone is granted when you press this, which is why it waits for you.
+            </p>
+            <button type="button" className="btn btn-primary btn-lg" onClick={resume}>
+              Carry on with the interview
+            </button>
+          </div>
+        )}
 
         {gate === "start" && (
           <div className="start-gate">
@@ -261,8 +334,10 @@ export default function StageTab({ interviewId, onEvaluated, onAbandoned }) {
               <strong>Ready when you are.</strong>
             </p>
             <p className="sub">
-              The interviewer will greet you, then ask the first question. Answer out loud — your
-              microphone is only used to transcribe your answer in this browser.
+              The interviewer will greet the candidate, then ask the first question. Answers are
+              spoken: the microphone is asked for once, stays on for the whole interview, and is
+              released the moment it ends. Nothing is typed, and no audio is recorded or uploaded
+              — only the transcription, in this browser.
             </p>
             <button type="button" className="btn btn-primary btn-lg" onClick={begin}>
               Begin the interview

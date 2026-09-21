@@ -22,6 +22,20 @@ export const properName = (raw) => {
     : name;
 };
 
+/**
+ * Seconds as a clock: m:ss, or h:mm:ss once an interview passes the hour.
+ * Used for the elapsed timer the candidate is shown in place of a question
+ * count, so it has to stay readable at a glance rather than be precise.
+ */
+export const duration = (seconds) => {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  const s = total % 60;
+  const m = Math.floor(total / 60) % 60;
+  const h = Math.floor(total / 3600);
+  const mm = h ? String(m).padStart(2, "0") : String(m);
+  return `${h ? `${h}:` : ""}${mm}:${String(s).padStart(2, "0")}`;
+};
+
 export const band = (score) =>
   score == null ? "" : score >= 70 ? "hi" : score >= 50 ? "mid" : "lo";
 

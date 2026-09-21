@@ -119,6 +119,7 @@ async def get_config():
         "default_weights": config.DEFAULT_PARAMETER_WEIGHTS,
         "default_planned_count": config.PLANNED_QUESTION_COUNT,
         "default_max_followups": config.MAX_FOLLOWUPS_PER_QUESTION,
+        "default_time_limit_minutes": config.TIME_LIMIT_MINUTES,
         "max_total_turns": config.MAX_TOTAL_TURNS,
         "verdict_bands": config.VERDICT_BANDS,
         "screening_available": bool(candidates.list_shortlists()),
@@ -381,6 +382,16 @@ async def invite_info(token: str):
     if state == "resume" and answered == 0:
         state = "new"
 
+    # Told before they press Begin, not sprung on them at minute twenty-nine.
+    if existing:
+        time_limit = int((existing.get("options") or {}).get("time_limit_minutes") or 0)
+    elif claims["kind"] == "candidate":
+        options, _source = _effective_options(
+            claims["shortlist_id"], claims["candidate_id"], None)
+        time_limit = int(options.get("time_limit_minutes") or 0)
+    else:
+        time_limit = config.TIME_LIMIT_MINUTES
+
     return {
         "state": state,
         "greeting_name": candidates.display_name(candidate.get("candidate_name")),
@@ -392,6 +403,7 @@ async def invite_info(token: str):
         "interview_id": (session_ref(existing["interview_id"])
                          if state in ("resume", "preparing") else None),
         "answered": answered,
+        "time_limit_minutes": time_limit,
         "expires_at": claims.get("expires_at"),
     }
 
@@ -486,13 +498,18 @@ def _interview_summary(record: dict | None) -> dict | None:
     if not record:
         return None
     report = record.get("report") or {}
-    answered = len([t for t in record.get("turns", []) if (t.get("answer") or "").strip()])
+    answered = len([t for t in record.get("turns", [])
+                    if ((t.get("answer") or "").strip()
+                        and ((t.get("assessment") or {}).get("answer_type") or "")
+                        != "no_answer")])
     return {
         "interview_id": record.get("interview_id"),
         "status": record.get("status"),
         "created_at": record.get("created_at"),
         "completed_at": record.get("completed_at"),
         "answered": answered,
+        "ended_early": bool(record.get("ended_early")),
+        "end_reason": record.get("end_reason", ""),
         "planned_total": len((record.get("plan") or {}).get("questions", [])),
         "overall_score": report.get("overall_score"),
         "verdict": report.get("verdict"),
@@ -763,6 +780,10 @@ def normalise_options(raw: dict | None, base: dict | None = None) -> dict:
         followups = int(pick("max_followups", config.MAX_FOLLOWUPS_PER_QUESTION))
     except (TypeError, ValueError):
         followups = config.MAX_FOLLOWUPS_PER_QUESTION
+    try:
+        time_limit = int(pick("time_limit_minutes", config.TIME_LIMIT_MINUTES) or 0)
+    except (TypeError, ValueError):
+        time_limit = config.TIME_LIMIT_MINUTES
 
     categories = [c for c in (pick("categories", None) or list(config.CATEGORIES))
                   if c in config.CATEGORIES]
@@ -787,6 +808,9 @@ def normalise_options(raw: dict | None, base: dict | None = None) -> dict:
         # is shown back is what will actually happen.
         "planned_count": max(4, min(20, planned)),
         "max_followups": max(0, min(4, followups)),
+        # 0 is "no limit", and is a real choice rather than an unset value, so it
+        # is never quietly replaced by the default.
+        "time_limit_minutes": 0 if time_limit <= 0 else max(5, min(180, time_limit)),
         "categories": categories,
         "voice": bool(pick("voice", True)),
         "voice_name": voice_name,
@@ -1222,11 +1246,16 @@ async def interview_details(interview_id: str):
                     "has_email": sent["has_email"], "sent": sent["sent"],
                     "sent_at": sent["sent_at"], "mailto": ""}
 
-    turns = [t for t in record.get("turns", []) if t.get("answer")]
+    turns = [t for t in record.get("turns", [])
+             if (t.get("answer") or "").strip()
+             and ((t.get("assessment") or {}).get("answer_type") or "") != "no_answer"]
     report = record.get("report") or {}
     return {
         "interview_id": interview_id,
         "status": record.get("status"),
+        "ended_early": bool(record.get("ended_early")),
+        "end_reason": record.get("end_reason", ""),
+        "ended_by": record.get("ended_by", ""),
         "job_title": record.get("job_title", "NA"),
         "created_at": record.get("created_at"),
         "completed_at": record.get("completed_at"),
@@ -1280,7 +1309,13 @@ async def next_prompt(interview_id: str):
 
 @app.post("/api/interviews/{interview_id}/answer")
 async def submit_answer(interview_id: str, payload: dict = Body(...)):
-    """Record one answer, grade it, and decide whether to follow up."""
+    """One thing the candidate said - which is not always an answer.
+
+    The reply carries an `action` saying what it turned out to be: "recorded"
+    (graded, ask the next question), "repeat" (say the same question again, the
+    turn is still open), "confirm_end" (they asked to stop; check first), or
+    "ended". See interview.submit_utterance().
+    """
     record, _is_session = _require_ref(interview_id)
     if record["status"] not in (engine.STATUS_READY, engine.STATUS_IN_PROGRESS):
         raise HTTPException(409, f"This interview is {record['status']}")
@@ -1300,9 +1335,51 @@ async def submit_answer(interview_id: str, payload: dict = Body(...)):
         seconds = 0.0
 
     try:
-        return await engine.record_answer(record, turn_number, answer, seconds, mode)
+        return await engine.submit_utterance(record, turn_number, answer, seconds, mode)
     except KeyError as exc:
         raise HTTPException(400, str(exc))
+
+
+@app.post("/api/interviews/{interview_id}/end")
+async def end_interview(interview_id: str, payload: dict = Body(default={})):
+    """Stop the conversation now, keeping everything answered so far.
+
+    Different from /abandon, which throws the interview away: this one is the
+    candidate pressing "End interview", and what they did say still gets
+    reviewed. The report is written by the /finish call that follows.
+    """
+    record, is_session = _require_ref(interview_id)
+    if record["status"] in (engine.STATUS_COMPLETED, engine.STATUS_ABANDONED):
+        return {"ok": True, "status": record["status"], "evaluate": False}
+    by = "candidate" if is_session else "interviewer"
+    reason = str(payload.get("reason") or "").strip() or (
+        "Ended by the candidate." if is_session else "Ended by the interviewer.")
+    outcome = engine.mark_ended(record, reason, by)
+    return {"ok": True, **outcome}
+
+
+@app.post("/api/interviews/{interview_id}/event")
+async def record_event(interview_id: str, payload: dict = Body(...)):
+    """Something that happened around the answers - notably leaving the tab.
+
+    Recorded as plain observation for the reviewer to read. It never reaches a
+    score: somebody who looked away may have answered the door, and letting a
+    browser event move a hiring number would be exactly the unfairness this
+    project exists to avoid.
+    """
+    record, _is_session = _require_ref(interview_id)
+    kind = str(payload.get("kind") or "").strip().lower()[:40]
+    if kind not in ("tab_hidden", "no_response", "mic_lost", "mic_blocked"):
+        raise HTTPException(400, "Unknown event kind")
+    if record["status"] not in (engine.STATUS_READY, engine.STATUS_IN_PROGRESS):
+        return {"ok": True, "ignored": True}
+    try:
+        seconds = round(max(0.0, min(86400.0, float(payload.get("seconds") or 0))), 1)
+    except (TypeError, ValueError):
+        seconds = 0.0
+    engine.log_event(record, kind, str(payload.get("detail") or ""), seconds=seconds)
+    storage.save_interview(record)
+    return {"ok": True}
 
 
 @app.post("/api/interviews/{interview_id}/finish")

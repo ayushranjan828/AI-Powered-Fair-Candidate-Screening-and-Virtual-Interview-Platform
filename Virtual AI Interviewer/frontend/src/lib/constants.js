@@ -95,6 +95,7 @@ export const FALLBACK_CFG = {
   default_weights: {},
   default_planned_count: 10,
   default_max_followups: 2,
+  default_time_limit_minutes: 0,
   max_total_turns: 30,
   ai_configured: false,
   interviewer: {},

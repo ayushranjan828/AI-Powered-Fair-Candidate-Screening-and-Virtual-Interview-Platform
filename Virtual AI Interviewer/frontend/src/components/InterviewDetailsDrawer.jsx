@@ -91,6 +91,14 @@ export default function InterviewDetailsDrawer({ interviewId, onClose, onOpenRep
             {data.overall_score != null
               ? ` · scored ${pct(data.overall_score)} (${titleise(data.verdict || "")})`
               : ""}
+            {data.ended_early && (
+              <>
+                <br />
+                <strong>Ended before finishing</strong>
+                {data.ended_by ? ` by the ${data.ended_by}` : ""}
+                {data.end_reason ? ` — ${data.end_reason}` : "."}
+              </>
+            )}
           </div>
 
           <Field label="Email" value={c.email_id} />

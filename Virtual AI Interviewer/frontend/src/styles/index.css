@@ -277,6 +277,29 @@ pre {
   color: var(--muted);
 }
 
+/* Folded away by default: relevant when you go looking, noise when you do not. */
+.conduct summary {
+  cursor: pointer;
+  list-style-position: outside;
+}
+
+.conduct ul {
+  margin: 8px 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.conduct .hint {
+  margin-top: 8px;
+}
+
+/* Something is actually wrong and the page cannot go on until it is fixed. */
+.inline-note-bad {
+  border-color: color-mix(in srgb, var(--bad) 32%, transparent);
+  background: var(--bad-soft);
+}
+
 .pill-live {
   background: var(--live-soft);
   color: var(--live);

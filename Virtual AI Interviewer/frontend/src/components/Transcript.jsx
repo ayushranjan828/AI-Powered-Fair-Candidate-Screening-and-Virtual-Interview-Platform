@@ -48,7 +48,7 @@ export default function Transcript({ turns }) {
             </div>
 
             <p className="tr-q">{t.question}</p>
-            <div className={`tr-a ${answered ? "" : "empty"}`}>
+            <div className={`tr-a ${answered ? "" : "unanswered"}`}>
               {answered || "No answer given."}
             </div>
 

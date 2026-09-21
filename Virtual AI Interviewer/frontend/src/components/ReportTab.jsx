@@ -31,6 +31,52 @@ function Bullets({ items, empty }) {
   );
 }
 
+/**
+ * What happened around the answers: asking for questions again, leaving the
+ * page, running out of time.
+ *
+ * Deliberately not a score and deliberately not a verdict. Somebody who left
+ * the tab for forty seconds may have answered their door; somebody who asked
+ * for three questions again may have a noisy room or may be listening
+ * carefully. It is put in front of a person because a person can tell the
+ * difference and a number cannot.
+ */
+function Conduct({ conduct, coverage }) {
+  const counts = conduct?.counts || {};
+  const labels = conduct?.labels || {};
+  const away = conduct?.seconds_away || 0;
+  const repeats = coverage?.repeats_requested || 0;
+  const declined = coverage?.declined || 0;
+
+  const lines = Object.entries(counts)
+    // Ending early has its own note above; repeated here it reads as a tally.
+    .filter(([kind]) => kind !== "ended_early" && kind !== "abandoned")
+    .map(([kind, n]) => `${labels[kind] || kind} ×${n}`);
+  if (declined) lines.push(`said they did not know ×${declined}`);
+
+  if (!lines.length) return null;
+
+  return (
+    <details className="inline-note inline-note-quiet conduct">
+      <summary>
+        <strong>How the session ran</strong> — {lines.length} thing
+        {lines.length === 1 ? "" : "s"} worth a look
+      </summary>
+      <ul>
+        {lines.map((line, idx) => (
+          <li key={idx}>{line}</li>
+        ))}
+        {away > 0 && <li>away from the page for about {Math.round(away)}s in total</li>}
+      </ul>
+      <p className="hint">
+        None of this affects the score. Repeats and declines cost nothing, and time away from the
+        page is recorded as an observation for you to weigh — not as evidence of anything.
+        {repeats ? ` The question was repeated ${repeats} time${repeats === 1 ? "" : "s"}.` : ""}
+      </p>
+    </details>
+  );
+}
+
 /* --------------------------------------------------- who attended, per list */
 function Overview({ shortlists, scope, onScope, data, onRefresh, onOpenReport }) {
   const [attend, setAttend] = useState("ALL");
@@ -452,11 +498,25 @@ function Report({ cfg, data, onReload, onChanged }) {
               </div>
             )}
 
+            {/* An interview somebody walked out of is not a short interview; it
+                is a different thing, and the score has to be read knowing it. */}
+            {cov.ended_early && (
+              <div className="inline-note">
+                <strong>This interview was ended before it finished</strong>
+                {cov.ended_by ? ` by the ${cov.ended_by}` : ""}
+                {cov.end_reason ? ` — ${cov.end_reason}` : "."} Only{" "}
+                {cov.answered ?? 0} question{(cov.answered ?? 0) === 1 ? " was" : "s were"}{" "}
+                answered, so this is a partial picture rather than a finished assessment.
+              </div>
+            )}
+
             {(rep.confidence_reasons || []).length > 0 && (
               <div className="inline-note inline-note-quiet">
                 Confidence was limited because {rep.confidence_reasons.join("; ")}.
               </div>
             )}
+
+            <Conduct conduct={rep.conduct} coverage={cov} />
           </div>
         </div>
 
